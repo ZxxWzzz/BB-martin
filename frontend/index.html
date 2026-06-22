@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BB马丁 M1 监控</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h1>BB马丁 M1</h1>
+            <span id="symbol" class="badge">--</span>
+            <span id="cycle-badge" class="badge idle">空仓</span>
+        </div>
+        <div class="header-right">
+            <div class="account-info">
+                <span>余额: <strong id="balance">--</strong></span>
+                <span>净值: <strong id="equity">--</strong></span>
+                <span>保证金: <strong id="margin">--</strong></span>
+            </div>
+            <span id="ws-status" class="ws-dot disconnected" title="WebSocket状态"></span>
+        </div>
+    </header>
+
+    <main>
+        <div class="left-panel">
+            <section class="card cycle-card">
+                <h3>周期状态</h3>
+                <div class="cycle-info">
+                    <div class="cycle-row">
+                        <span class="label">方向</span>
+                        <span id="direction" class="value">--</span>
+                    </div>
+                    <div class="cycle-row">
+                        <span class="label">层数</span>
+                        <span id="layers" class="value">0/8</span>
+                        <div class="layer-bar"><div id="layer-fill" class="layer-fill"></div></div>
+                    </div>
+                    <div class="cycle-row">
+                        <span class="label">总手数</span>
+                        <span id="total-lots" class="value">0.00</span>
+                    </div>
+                    <div class="cycle-row">
+                        <span class="label">浮盈亏</span>
+                        <span id="floating-pnl" class="value">$0.00</span>
+                    </div>
+                    <div class="cycle-row">
+                        <span class="label">止盈目标</span>
+                        <span id="tp-target" class="value">$5.00</span>
+                    </div>
+                    <div class="cycle-row">
+                        <span class="label">网格间距</span>
+                        <span id="grid-spacing" class="value">--</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card positions-card">
+                <h3>持仓列表</h3>
+                <table id="positions-table">
+                    <thead><tr><th>层</th><th>手数</th><th>开仓价</th><th>盈亏</th></tr></thead>
+                    <tbody id="positions-body"></tbody>
+                </table>
+                <p id="no-positions" class="empty-msg">无持仓</p>
+            </section>
+
+            <section class="card risk-card">
+                <h3>风控指标</h3>
+                <div class="gauges">
+                    <div class="gauge-item">
+                        <svg class="gauge-svg" viewBox="0 0 100 100">
+                            <circle class="gauge-bg" cx="50" cy="50" r="40"/>
+                            <circle id="gauge-dd" class="gauge-fill" cx="50" cy="50" r="40"/>
+                        </svg>
+                        <div class="gauge-label">回撤<br><span id="dd-val">0%</span></div>
+                    </div>
+                    <div class="gauge-item">
+                        <svg class="gauge-svg" viewBox="0 0 100 100">
+                            <circle class="gauge-bg" cx="50" cy="50" r="40"/>
+                            <circle id="gauge-daily" class="gauge-fill" cx="50" cy="50" r="40"/>
+                        </svg>
+                        <div class="gauge-label">日亏<br><span id="daily-val">0%</span></div>
+                    </div>
+                    <div class="gauge-item">
+                        <svg class="gauge-svg" viewBox="0 0 100 100">
+                            <circle class="gauge-bg" cx="50" cy="50" r="40"/>
+                            <circle id="gauge-float" class="gauge-fill" cx="50" cy="50" r="40"/>
+                        </svg>
+                        <div class="gauge-label">浮亏<br><span id="float-val">0%</span></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card indicators-card">
+                <h3>指标</h3>
+                <div class="indicator-grid">
+                    <span class="label">BB上轨</span><span id="bb-upper" class="value">--</span>
+                    <span class="label">BB中轨</span><span id="bb-middle" class="value">--</span>
+                    <span class="label">BB下轨</span><span id="bb-lower" class="value">--</span>
+                    <span class="label">RSI</span><span id="rsi" class="value">--</span>
+                    <span class="label">点差</span><span id="spread" class="value">--</span>
+                    <span class="label">Bid/Ask</span><span id="bid-ask" class="value">--</span>
+                </div>
+            </section>
+        </div>
+
+        <div class="right-panel">
+            <section class="card chart-card">
+                <h3>权益曲线</h3>
+                <div id="equity-chart"></div>
+            </section>
+
+            <section class="card stats-card">
+                <h3>统计概览</h3>
+                <div class="stats-grid">
+                    <div class="stat"><span class="stat-label">总周期</span><span id="stat-total" class="stat-value">0</span></div>
+                    <div class="stat"><span class="stat-label">胜率</span><span id="stat-winrate" class="stat-value">0%</span></div>
+                    <div class="stat"><span class="stat-label">盈亏比</span><span id="stat-pf" class="stat-value">0</span></div>
+                    <div class="stat"><span class="stat-label">总利润</span><span id="stat-profit" class="stat-value">$0</span></div>
+                    <div class="stat"><span class="stat-label">最大回撤</span><span id="stat-maxdd" class="stat-value">0%</span></div>
+                    <div class="stat"><span class="stat-label">平均层数</span><span id="stat-layers" class="stat-value">0</span></div>
+                    <div class="stat"><span class="stat-label">最佳单笔</span><span id="stat-best" class="stat-value">$0</span></div>
+                    <div class="stat"><span class="stat-label">最差单笔</span><span id="stat-worst" class="stat-value">$0</span></div>
+                </div>
+            </section>
+
+            <section class="card history-card">
+                <h3>交易历史</h3>
+                <div class="table-wrap">
+                    <table id="history-table">
+                        <thead><tr>
+                            <th>#</th><th>方向</th><th>层数</th><th>盈亏</th><th>原因</th><th>时长</th><th>时间</th>
+                        </tr></thead>
+                        <tbody id="history-body"></tbody>
+                    </table>
+                </div>
+                <p id="no-history" class="empty-msg">暂无交易记录</p>
+            </section>
+        </div>
+    </main>
+
+    <footer>
+        <div id="event-log" class="event-log"></div>
+    </footer>
+
+    <script src="/js/app.js"></script>
+    <script src="/js/charts.js"></script>
+    <script src="/js/gauges.js"></script>
+    <script src="/js/history.js"></script>
+</body>
+</html>
