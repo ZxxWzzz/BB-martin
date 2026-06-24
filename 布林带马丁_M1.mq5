@@ -33,7 +33,7 @@ input double             Inp_WidthATR     = 5.0;         // 带宽ATR上限
 
 //--- M30大势过滤 (位置+震荡)
 input group              "=== M30大势过滤 ==="
-input bool               Inp_M30_Filter   = true;        // 启用M30趋势过滤
+input bool               Inp_M30_Filter   = false;       // 启用M30趋势过滤
 input int                Inp_M30_BB       = 30;          // M30 BB周期
 input double             Inp_M30_BBDev    = 2.2;         // M30 BB偏差
 input double             Inp_M30_NeutralRatio = 0.30;    // M30震荡判定: 距中轨<半带宽×此比例 视为震荡(双向允许)
