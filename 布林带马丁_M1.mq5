@@ -1,16 +1,26 @@
 //+------------------------------------------------------------------+
 //|                                           布林带马丁_M1.mq5       |
-//|              真距离驱动马丁 (XAU M1) v4.0                          |
+//|              纯距离驱动马丁 (XAU M1) v4.2                          |
 //+------------------------------------------------------------------+
-//|  v4.0 核心: 真正的马丁(距离驱动)                                    |
-//|  ① L1开仓: BB+RSI 信号 + M30大势过滤 + M1过滤                      |
-//|  ② L2-L11加仓: 距离驱动(USD序列), 不再依赖RSI/BB信号                |
-//|  ③ 趋势保护: M30大势 + M1斜率/单边/带宽 + 流动性熔断                 |
-//|  ④ 出场: 篮子$5 / 回中轨$1.5 / 风控强平                            |
+//|  设计哲学: 真正的马丁,不怕逆境                                      |
+//|                                                                    |
+//|  ① L1开仓: BB(30,2.2)触轨 + RSI(28/72) 双信号                     |
+//|     边界: 时段3-22h / 余额≥$1000 / 点差≤80 / 流动性正常             |
+//|     可选: M30大势过滤(默认关闭)                                     |
+//|                                                                    |
+//|  ② L2-L11加仓: 纯距离驱动                                          |
+//|     距离序列: 4,5,6,7,8,9,10,11,12,14 USD (累计$86)                 |
+//|     手数序列: 0.01-0.13 累计0.6手                                   |
+//|     条件: 必须亏损 + 距上层够距离                                   |
+//|     无任何过滤(单边/斜率/带宽/RSI/M30/流动性 一概不影响加仓)         |
+//|                                                                    |
+//|  ③ 出场: 篮子$8 / 回中轨$2                                         |
+//|                                                                    |
+//|  ④ 兜底: 总亏损达50% → 强平 (唯一开仓后保护机制)                    |
 //+------------------------------------------------------------------+
-#property copyright   "布林带马丁 M1 v4.0"
-#property version     "4.00"
-#property description "真距离驱动马丁 (XAU M1) - M30大势过滤+流动性熔断"
+#property copyright   "布林带马丁 M1 v4.2"
+#property version     "4.20"
+#property description "纯距离驱动马丁 (XAU M1) - 50%总亏唯一兜底"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -182,7 +192,7 @@ int OnInit()
    liquidityPausedUntil = 0;
    SyncCycleState();
 
-   Print("=== 布林带马丁 M1 v4.1 (距离驱动) ===");
+   Print("=== 布林带马丁 M1 v4.2 (纯距离驱动) ===");
    Print("L1信号: BB(", Inp_BB_Period, ",", Inp_BB_Dev, ") RSI ", Inp_RSI_OS, "/", Inp_RSI_OB);
    Print("M30过滤(位置式): ", Inp_M30_Filter ? "开启" : "关闭",
          " 中性区比例=", Inp_M30_NeutralRatio);
@@ -669,7 +679,7 @@ void UpdatePanel()
 
    string dir = (cycleDirection == 1) ? "做多" : (cycleDirection == -1) ? "做空" : "空仓";
 
-   CreateLbl(panelName+"t", 10, y, "=== BB马丁 M1 v4.1 ===", clrGold); y += lh + 4;
+   CreateLbl(panelName+"t", 10, y, "=== BB马丁 M1 v4.2 ===", clrGold); y += lh + 4;
    CreateLbl(panelName+"d", 10, y, StringFormat("%s L:%d/%d 手数:%.2f/%.2f", dir, cycleLayer, Inp_MaxLayers, totalLots, Inp_MaxTotalLots),
              cycleDirection==1?clrLime:cycleDirection==-1?clrRed:clrGray); y += lh;
 
