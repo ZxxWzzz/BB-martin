@@ -23,14 +23,6 @@ input int                Inp_RSI_Period   = 14;          // RSI周期
 input double             Inp_RSI_OB       = 72.0;        // RSI做空触发(>=)
 input double             Inp_RSI_OS       = 28.0;        // RSI做多触发(<=)
 
-//--- L1入场过滤
-input group              "=== L1入场过滤 ==="
-input int                Inp_OB_Lookback  = 5;           // 外轨检测K线数
-input int                Inp_OB_MaxClose  = 2;           // 最大允许外轨收盘数
-input int                Inp_SlopeBars    = 8;           // M1中轨斜率检测K线数
-input double             Inp_SlopeATR     = 0.7;         // M1斜率ATR倍数阈值
-input double             Inp_WidthATR     = 5.0;         // 带宽ATR上限
-
 //--- M30大势过滤 (位置+震荡)
 input group              "=== M30大势过滤 ==="
 input bool               Inp_M30_Filter   = false;       // 启用M30趋势过滤
@@ -335,61 +327,6 @@ bool IsTradeTime()
 }
 
 //+------------------------------------------------------------------+
-//| 过滤器: M1 单边/斜率/带宽                                           |
-//+------------------------------------------------------------------+
-bool CheckOuterBandFilter(bool isBuy)
-{
-   int count = 0;
-   double bb_band[];
-   ArraySetAsSeries(bb_band, true);
-
-   int bufIdx = isBuy ? 2 : 1;
-   if(CopyBuffer(bbHandle, bufIdx, 1, Inp_OB_Lookback, bb_band) < Inp_OB_Lookback) return false;
-
-   for(int i = 0; i < Inp_OB_Lookback; i++)
-   {
-      double cl = iClose(_Symbol, PERIOD_CURRENT, i + 1);
-      if(isBuy && cl <= bb_band[i]) count++;
-      if(!isBuy && cl >= bb_band[i]) count++;
-   }
-   return (count > Inp_OB_MaxClose);
-}
-
-bool CheckSlopeFilter(bool isBuy)
-{
-   double bb_mid[];
-   ArraySetAsSeries(bb_mid, true);
-   if(CopyBuffer(bbHandle, 0, 1, Inp_SlopeBars + 1, bb_mid) < Inp_SlopeBars + 1) return false;
-
-   double atr[];
-   ArraySetAsSeries(atr, true);
-   if(CopyBuffer(atrHandle, 0, 1, 1, atr) < 1) return false;
-   if(atr[0] <= 0) return false;
-
-   double slope = bb_mid[0] - bb_mid[Inp_SlopeBars];
-   double threshold = atr[0] * Inp_SlopeATR;
-
-   if(isBuy && slope < -threshold) return true;
-   if(!isBuy && slope > threshold) return true;
-   return false;
-}
-
-bool CheckBBWidthFilter()
-{
-   double bb_u[], bb_l[], atr[];
-   ArraySetAsSeries(bb_u, true);
-   ArraySetAsSeries(bb_l, true);
-   ArraySetAsSeries(atr, true);
-
-   if(CopyBuffer(bbHandle, 1, 1, 1, bb_u) < 1) return false;
-   if(CopyBuffer(bbHandle, 2, 1, 1, bb_l) < 1) return false;
-   if(CopyBuffer(atrHandle, 0, 1, 1, atr) < 1) return false;
-   if(atr[0] <= 0) return false;
-
-   return ((bb_u[0] - bb_l[0]) > atr[0] * Inp_WidthATR);
-}
-
-//+------------------------------------------------------------------+
 //| 过滤器: M30 大势 (位置式 + 震荡判定)                                 |
 //| 返回true表示阻止该方向开仓                                          |
 //+------------------------------------------------------------------+
@@ -490,27 +427,10 @@ void CheckEntry()
 
    bool isBuy = touchLower;
 
-   // M30大势过滤(最先检查,过不去就不浪费后续计算)
+   // M30大势过滤 (可选,通过 Inp_M30_Filter 启停)
    if(CheckM30TrendFilter(isBuy))
    {
       if(Inp_Debug) Print("[过滤] M30大势 ", isBuy?"做多":"做空", " 拦截");
-      return;
-   }
-
-   // M1过滤组
-   if(CheckOuterBandFilter(isBuy))
-   {
-      if(Inp_Debug) Print("[过滤] 单边推进 ", isBuy?"多":"空", " 拦截");
-      return;
-   }
-   if(CheckSlopeFilter(isBuy))
-   {
-      if(Inp_Debug) Print("[过滤] M1斜率过大 ", isBuy?"多":"空", " 拦截");
-      return;
-   }
-   if(CheckBBWidthFilter())
-   {
-      if(Inp_Debug) Print("[过滤] M1带宽异常 拦截");
       return;
    }
 
