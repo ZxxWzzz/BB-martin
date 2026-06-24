@@ -44,7 +44,6 @@ input int                Inp_MaxLayers    = 11;          // 最大层数
 input string             Inp_LotSeq       = "0.01,0.01,0.02,0.02,0.03,0.04,0.05,0.07,0.10,0.12,0.13"; // 11层手数序列
 input string             Inp_DistanceSeq  = "4,5,6,7,8,9,10,11,12,14"; // 距离序列(USD,L2-L11共10项)
 input double             Inp_MaxTotalLots = 0.60;        // 最大总手数
-input int                Inp_MinBars      = 3;           // 加仓最小K线间隔
 
 //--- 流动性熔断 (新)
 input group              "=== 流动性熔断 ==="
@@ -197,7 +196,7 @@ int OnInit()
          " 中性区比例=", Inp_M30_NeutralRatio);
    Print("加仓序列(USD): ", Inp_DistanceSeq);
    Print("手数序列: ", Inp_LotSeq);
-   Print("MaxLayers=", Inp_MaxLayers, " MaxLots=", Inp_MaxTotalLots, " MinBars=", Inp_MinBars);
+   Print("MaxLayers=", Inp_MaxLayers, " MaxLots=", Inp_MaxTotalLots);
    Print("流动性: ", Inp_Liquidity ? "开启" : "关闭",
          " M1波动>$", Inp_LiqRange, " 暂停", Inp_LiqPauseSec, "秒");
    Print("TP_Basket=$", Inp_TP_Basket, " TP_Mid_Min=$", Inp_TP_MidMin);
@@ -559,24 +558,21 @@ void CheckEntry()
 }
 
 //+------------------------------------------------------------------+
-//| L2-L11 加仓 (距离驱动)                                              |
+//| L2-L11 加仓 (纯距离驱动, 仅保留结构硬限和马丁核心条件)              |
+//| 设计原则: 开仓后只受50%总亏强平干预,其他过滤一概不影响加仓          |
 //+------------------------------------------------------------------+
 void CheckMartingaleAdd()
 {
-   // 硬限额
+   // 结构硬限(防止超出策略边界)
    if(cycleLayer >= Inp_MaxLayers) return;
-   if(barCount - lastAddBar < Inp_MinBars) return;
 
    double nextLots = GetLotForLayer(cycleLayer + 1);
    if(GetCurrentTotalLots() + nextLots > Inp_MaxTotalLots) return;
 
-   // 必须亏损
+   // 马丁核心: 必须处于亏损状态
    if(CalcTotalProfit() >= 0) return;
 
-   // 注: 流动性熔断不影响加仓(已开周期让马丁逻辑跑完)
-   // 仅 CheckEntry 拦L1, 这里不拦L2-L11
-
-   // 距离触发(核心)
+   // 马丁核心: 距上一层价格 >= 该层间距
    double lastPrice = GetLastOpenPrice();
    if(lastPrice == 0) return;
 
@@ -589,19 +585,6 @@ void CheckMartingaleAdd()
 
    double requiredDist = GetDistanceForLayer(cycleLayer + 1);
    if(distance < requiredDist) return;
-
-   // 趋势保护
-   bool isBuy = (cycleDirection == 1);
-   if(CheckSlopeFilter(isBuy))
-   {
-      if(Inp_Debug) Print("[加仓拦截] M1斜率过大 L", cycleLayer + 1);
-      return;
-   }
-   if(CheckOuterBandFilter(isBuy))
-   {
-      if(Inp_Debug) Print("[加仓拦截] 单边推进 L", cycleLayer + 1);
-      return;
-   }
 
    // 执行加仓
    if(cycleDirection == 1)
