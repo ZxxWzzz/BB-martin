@@ -253,7 +253,7 @@ LiquidityRange = 3.0     // M1波动$3触发
 LiquidityPauseSec = 180  // 暂停3分钟
 
 // 出场
-TP_Basket = 5.0
+TP_Basket = 8.0  // v4.1调整: 5.0 → 8.0 (避免深层只赚$0.08就跑)
 TP_MidMin = 1.5
 
 // 风控

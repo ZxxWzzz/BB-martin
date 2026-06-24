@@ -55,7 +55,7 @@ input int                Inp_LiqPauseSec  = 180;         // 暂停秒数
 
 //--- 出场
 input group              "=== 出场 ==="
-input double             Inp_TP_Basket    = 5.0;         // 篮子止盈(USD)
+input double             Inp_TP_Basket    = 8.0;         // 篮子止盈(USD)
 input double             Inp_TP_MidMin    = 1.5;         // 回中轨最低盈利(USD)
 
 //--- 风控
