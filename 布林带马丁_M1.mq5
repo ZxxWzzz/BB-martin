@@ -1,29 +1,33 @@
 //+------------------------------------------------------------------+
 //|                                           布林带马丁_M1.mq5       |
-//|              布林带震荡 + 马丁格尔 黄金M1 v2.0                      |
+//|              布林带均值回归马丁 (XAU M1) v3.0                      |
 //+------------------------------------------------------------------+
-//|  策略: M1高频震荡回归马丁                                           |
-//|  入场: BB(30,2.2)触轨 + RSI(22/78) + 单边过滤 + 斜率过滤           |
-//|  加仓: 递增间距(5→18覆盖100刀) + 中轨移动确认 + K线间隔             |
-//|  出场: 回中轨止盈 / 篮子止盈 / 风控强平                             |
+//|  v3.0 核心: 纯信号驱动的马丁                                        |
+//|  ① L1开仓: BB触轨 + RSI极值 + 单边/斜率/带宽过滤                   |
+//|  ② L2-L11加仓: 必须等待"新的"BB+RSI信号事件                        |
+//|     RSI重置机制: RSI离开极值区再回来才算新事件                      |
+//|  ③ 加仓硬条件: 必须亏损 + K线间隔 + 中轨斜率正常                    |
+//|  ④ 出场: 篮子$5 / 回中轨$1.5 / 风控强平                            |
 //+------------------------------------------------------------------+
-#property copyright   "布林带马丁 M1 v2.0"
-#property version     "2.00"
-#property description "高频震荡回归马丁 (XAU M1)"
+#property copyright   "布林带马丁 M1 v3.0"
+#property version     "3.00"
+#property description "纯信号驱动均值回归马丁 (XAU M1)"
 #property strict
 
 #include <Trade\Trade.mqh>
 
-//--- 信号参数
+//--- 信号
 input group              "=== 信号 ==="
 input int                Inp_BB_Period    = 30;          // BB周期
 input double             Inp_BB_Dev       = 2.2;         // BB偏差
 input int                Inp_RSI_Period   = 14;          // RSI周期
-input double             Inp_RSI_OB       = 78.0;        // RSI做空阈值
-input double             Inp_RSI_OS       = 22.0;        // RSI做多阈值
+input double             Inp_RSI_OB       = 72.0;        // RSI做空触发(>=)
+input double             Inp_RSI_OS       = 28.0;        // RSI做多触发(<=)
+input double             Inp_RSI_OB_Reset = 60.0;        // 做空RSI重置(<)
+input double             Inp_RSI_OS_Reset = 40.0;        // 做多RSI重置(>)
 
-//--- 单边过滤
-input group              "=== 单边过滤 ==="
+//--- 入场过滤
+input group              "=== 入场过滤 ==="
 input int                Inp_OB_Lookback  = 5;           // 外轨检测K线数
 input int                Inp_OB_MaxClose  = 2;           // 最大允许外轨收盘数
 input int                Inp_SlopeBars    = 8;           // 斜率检测K线数
@@ -36,14 +40,12 @@ input int                Inp_MaxLayers    = 11;          // 最大层数
 input double             Inp_StartLots    = 0.01;        // 首单手数
 input double             Inp_LotMulti     = 1.25;        // 加仓倍数
 input double             Inp_MaxTotalLots = 0.60;        // 最大总手数
-input string             Inp_GapSeq       = "5,6,7,8,9,10,11,12,14,18"; // 加仓间距序列(USD)
-input double             Inp_MidMove      = 1.0;         // 中轨移动确认(USD)
-input int                Inp_MinBars      = 2;           // 加仓最小K线间隔
+input int                Inp_MinBars      = 3;           // 加仓最小K线间隔
 
 //--- 出场
 input group              "=== 出场 ==="
-input double             Inp_TP_Basket    = 8.0;         // 篮子止盈(USD)
-input double             Inp_TP_MidMin    = 2.0;         // 回中轨最低盈利(USD)
+input double             Inp_TP_Basket    = 5.0;         // 篮子止盈(USD)
+input double             Inp_TP_MidMin    = 1.5;         // 回中轨最低盈利(USD)
 
 //--- 风控
 input group              "=== 风控 ==="
@@ -76,12 +78,8 @@ int            cycleDirection;     // 0=空仓, 1=多, -1=空
 int            cycleLayer;
 string         panelName = "BBMartin";
 bool           dayLocked;
-
-// 加仓控制
-double         gapSequence[10];
-int            gapCount;
-double         lastAddMidline;     // 上次加仓时的中轨值
-int            lastAddBar;         // 上次加仓时的K线编号
+bool           rsiArmed;           // RSI重置标志(true=已重置可触发新事件)
+int            lastAddBar;
 
 // 数据导出
 uint           lastExportTick = 0;
@@ -98,31 +96,8 @@ ENUM_ORDER_TYPE_FILLING DetectFilling()
    return ORDER_FILLING_RETURN;
 }
 
-void ParseGapSequence()
-{
-   gapCount = 0;
-   string parts[];
-   int n = StringSplit(Inp_GapSeq, ',', parts);
-   for(int i = 0; i < n && i < 10; i++)
-   {
-      gapSequence[i] = StringToDouble(parts[i]);
-      gapCount++;
-   }
-}
-
-double GetGapForLayer(int layer)
-{
-   int idx = layer - 1;  // layer 2 → idx 1 → gapSequence[0]
-   if(idx < 1) return gapSequence[0];
-   idx--;
-   if(idx >= gapCount) return gapSequence[gapCount - 1];
-   return gapSequence[idx];
-}
-
 int OnInit()
 {
-   ParseGapSequence();
-
    bbHandle = iBands(_Symbol, PERIOD_CURRENT, Inp_BB_Period, 0, Inp_BB_Dev, PRICE_CLOSE);
    if(bbHandle == INVALID_HANDLE) { Print("BB创建失败"); return INIT_FAILED; }
 
@@ -142,16 +117,17 @@ int OnInit()
    MqlDateTime dt; TimeTradeServer(dt); lastDay = dt.day;
    barCount = 0;
    dayLocked = false;
+   rsiArmed = false;
    lastAddBar = 0;
-   lastAddMidline = 0;
    SyncCycleState();
 
-   Print("=== 布林带马丁 M1 v2.0 ===");
-   Print("品种=", _Symbol, " BB(", Inp_BB_Period, ",", Inp_BB_Dev, ") RSI(",
-         Inp_RSI_Period, ") OB=", Inp_RSI_OB, " OS=", Inp_RSI_OS);
-   Print("层数=", Inp_MaxLayers, " 倍数=", Inp_LotMulti, " MaxLots=", Inp_MaxTotalLots);
-   Print("间距序列=", Inp_GapSeq, " 中轨确认=", Inp_MidMove, " MinBars=", Inp_MinBars);
-   Print("篮子TP=", Inp_TP_Basket, " 中轨TP最低=", Inp_TP_MidMin);
+   Print("=== 布林带马丁 M1 v3.0 (纯信号驱动) ===");
+   Print("品种=", _Symbol, " BB(", Inp_BB_Period, ",", Inp_BB_Dev, ")");
+   Print("RSI触发=", Inp_RSI_OS, "/", Inp_RSI_OB,
+         " 重置=", Inp_RSI_OS_Reset, "/", Inp_RSI_OB_Reset);
+   Print("最大层=", Inp_MaxLayers, " 倍数=", Inp_LotMulti, " MaxLots=", Inp_MaxTotalLots,
+         " MinBars=", Inp_MinBars);
+   Print("TP_Basket=$", Inp_TP_Basket, " TP_Mid_Min=$", Inp_TP_MidMin);
    Print("DD熔断=", Inp_MaxDD_Pct, "% 日亏=", Inp_DailyLoss_Pct, "% 浮亏=", Inp_MaxFloat_Pct, "%");
    return INIT_SUCCEEDED;
 }
@@ -172,7 +148,11 @@ void OnTick()
    {
       if(CheckForceClose()) return;
       CheckTakeProfit();
-      if(cycleDirection != 0) CheckMartingaleAdd();
+      if(cycleDirection != 0)
+      {
+         UpdateRSIArmed();       // 每tick更新RSI重置状态
+         CheckMartingaleAdd();
+      }
    }
 
    if(!IsNewBar()) return;
@@ -217,7 +197,7 @@ void CheckNewDay()
 }
 
 //+------------------------------------------------------------------+
-//| 风控计算                                                           |
+//| 风控                                                               |
 //+------------------------------------------------------------------+
 double GetDrawdownPct()
 {
@@ -264,20 +244,21 @@ bool CheckForceClose()
       CloseAllPositions();
       cycleDirection = 0;
       cycleLayer = 0;
+      rsiArmed = false;
       return true;
    }
    return false;
 }
 
-//+------------------------------------------------------------------+
-//| 入场逻辑: BB触轨 + RSI极值 + 单边过滤 + 斜率过滤 + 带宽过滤        |
-//+------------------------------------------------------------------+
 bool IsTradeTime()
 {
    MqlDateTime dt; TimeTradeServer(dt);
    return (dt.hour >= Inp_StartHour && dt.hour < Inp_EndHour);
 }
 
+//+------------------------------------------------------------------+
+//| 过滤器                                                             |
+//+------------------------------------------------------------------+
 bool CheckOuterBandFilter(bool isBuy)
 {
    int count = 0;
@@ -311,8 +292,8 @@ bool CheckSlopeFilter(bool isBuy)
    double slope = bb_mid[0] - bb_mid[Inp_SlopeBars];
    double threshold = atr[0] * Inp_SlopeATR;
 
-   if(isBuy && slope < -threshold) return true;   // 中轨快速下行，禁止做多
-   if(!isBuy && slope > threshold) return true;    // 中轨快速上行，禁止做空
+   if(isBuy && slope < -threshold) return true;
+   if(!isBuy && slope > threshold) return true;
    return false;
 }
 
@@ -332,6 +313,46 @@ bool CheckBBWidthFilter()
    return (width > atr[0] * Inp_WidthATR);
 }
 
+double GetCurrentRSI()
+{
+   double rsi[];
+   ArraySetAsSeries(rsi, true);
+   if(CopyBuffer(rsiHandle, 0, 0, 2, rsi) < 2) return 50.0;
+   return rsi[1];  // 上一根K线的RSI
+}
+
+//+------------------------------------------------------------------+
+//| RSI重置机制(每tick调用,在持仓周期内)                                |
+//+------------------------------------------------------------------+
+void UpdateRSIArmed()
+{
+   if(rsiArmed) return; // 已装弹无需更新
+
+   double rsi = GetCurrentRSI();
+
+   if(cycleDirection == 1)
+   {
+      // 做多周期: RSI走出做多极值区(>40)即装弹
+      if(rsi > Inp_RSI_OS_Reset)
+      {
+         rsiArmed = true;
+         if(Inp_Debug) Print("[RSI重置] 做多周期 RSI=", DoubleToString(rsi,1), " 已装弹");
+      }
+   }
+   else if(cycleDirection == -1)
+   {
+      // 做空周期: RSI走出做空极值区(<60)即装弹
+      if(rsi < Inp_RSI_OB_Reset)
+      {
+         rsiArmed = true;
+         if(Inp_Debug) Print("[RSI重置] 做空周期 RSI=", DoubleToString(rsi,1), " 已装弹");
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| L1开仓                                                             |
+//+------------------------------------------------------------------+
 void CheckEntry()
 {
    if(!IsTradeTime()) return;
@@ -351,80 +372,70 @@ void CheckEntry()
 
    bool touchUpper = (close1 >= bb_upper[1]);
    bool touchLower = (close1 <= bb_lower[1]);
-
    if(!touchUpper && !touchLower) return;
 
-   // RSI确认
-   double rsi[];
-   ArraySetAsSeries(rsi, true);
-   if(CopyBuffer(rsiHandle, 0, 0, 3, rsi) < 3) return;
+   double rsi = GetCurrentRSI();
 
-   if(touchUpper && rsi[1] < Inp_RSI_OB) return;
-   if(touchLower && rsi[1] > Inp_RSI_OS) return;
+   if(touchUpper && rsi < Inp_RSI_OB) return;
+   if(touchLower && rsi > Inp_RSI_OS) return;
 
-   // 单边过滤: 连续收在外轨外
    bool isBuy = touchLower;
+
    if(CheckOuterBandFilter(isBuy))
    {
-      if(Inp_Debug) Print("[过滤] 单边推进 ", isBuy?"多":"空", " 被拦截");
+      if(Inp_Debug) Print("[过滤] 单边推进 ", isBuy?"多":"空", " 拦截");
       return;
    }
-
-   // 斜率过滤: 中轨快速移动
    if(CheckSlopeFilter(isBuy))
    {
-      if(Inp_Debug) Print("[过滤] 中轨斜率过大 ", isBuy?"多":"空", " 被拦截");
+      if(Inp_Debug) Print("[过滤] 中轨斜率过大 ", isBuy?"多":"空", " 拦截");
       return;
    }
-
-   // 带宽过滤: 布林带异常扩张
    if(CheckBBWidthFilter())
    {
-      if(Inp_Debug) Print("[过滤] 布林带宽异常 被拦截");
+      if(Inp_Debug) Print("[过滤] 布林带宽异常 拦截");
       return;
    }
 
-   // 风控检查
    if(GetDrawdownPct() >= Inp_MaxDD_Pct) return;
    if(GetDailyLossPct() >= Inp_DailyLoss_Pct) return;
 
-   // 开仓
    double lots = Inp_StartLots;
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   if(touchLower)
+   if(isBuy)
    {
       if(Inp_Debug)
          Print(">>> 做多 Cl=", DoubleToString(close1,_Digits),
                " Lower=", DoubleToString(bb_lower[1],_Digits),
-               " RSI=", DoubleToString(rsi[1],1));
+               " RSI=", DoubleToString(rsi,1));
 
       if(trade.Buy(lots, _Symbol, ask, 0, 0, "M1多L1"))
       {
          cycleDirection = 1;
          cycleLayer = 1;
          lastAddBar = barCount;
-         lastAddMidline = bb_middle[0];
+         rsiArmed = false;       // L1开完立即卸弹
          exportCycleId++;
          cycleOpenTime = TimeCurrent();
          cycleEntryPrice = ask;
          Print("开多L1 @", ask, " Lots=", lots);
       }
    }
-   else if(touchUpper)
+   else
    {
       if(Inp_Debug)
          Print(">>> 做空 Cl=", DoubleToString(close1,_Digits),
                " Upper=", DoubleToString(bb_upper[1],_Digits),
-               " RSI=", DoubleToString(rsi[1],1));
+               " RSI=", DoubleToString(rsi,1));
 
       if(trade.Sell(lots, _Symbol, bid, 0, 0, "M1空L1"))
       {
          cycleDirection = -1;
          cycleLayer = 1;
          lastAddBar = barCount;
-         lastAddMidline = bb_middle[0];
+         rsiArmed = false;
          exportCycleId++;
          cycleOpenTime = TimeCurrent();
          cycleEntryPrice = bid;
@@ -434,73 +445,73 @@ void CheckEntry()
 }
 
 //+------------------------------------------------------------------+
-//| 加仓逻辑: 递增间距 + 中轨移动确认 + K线间隔                         |
+//| L2-L11 加仓(纯信号驱动)                                             |
 //+------------------------------------------------------------------+
 void CheckMartingaleAdd()
 {
+   // 硬限额
    if(cycleLayer >= Inp_MaxLayers) return;
-
-   // K线间隔检查
    if(barCount - lastAddBar < Inp_MinBars) return;
 
    double nextLots = GetLayerLots(cycleLayer + 1);
-   double totalAfter = GetCurrentTotalLots() + nextLots;
-   if(totalAfter > Inp_MaxTotalLots) return;
+   if(GetCurrentTotalLots() + nextLots > Inp_MaxTotalLots) return;
 
+   // 必须亏损
+   if(CalcTotalProfit() >= 0) return;
+
+   // RSI必须已重置
+   if(!rsiArmed) return;
+
+   // 信号事件检测
+   double bb_upper[], bb_lower[];
+   ArraySetAsSeries(bb_upper, true);
+   ArraySetAsSeries(bb_lower, true);
+   if(CopyBuffer(bbHandle, 1, 0, 3, bb_upper) < 3) return;
+   if(CopyBuffer(bbHandle, 2, 0, 3, bb_lower) < 3) return;
+
+   double close1 = iClose(_Symbol, PERIOD_CURRENT, 1);
+   double rsi = GetCurrentRSI();
+
+   bool sigBuy  = (close1 <= bb_lower[1]) && (rsi <= Inp_RSI_OS);
+   bool sigSell = (close1 >= bb_upper[1]) && (rsi >= Inp_RSI_OB);
+
+   bool trigger = (cycleDirection == 1 && sigBuy) ||
+                  (cycleDirection == -1 && sigSell);
+   if(!trigger) return;
+
+   // 中轨斜率过滤
+   if(CheckSlopeFilter(cycleDirection == 1))
+   {
+      if(Inp_Debug) Print("[加仓拦截] 中轨斜率过大 L", cycleLayer + 1);
+      return;
+   }
+
+   // 执行加仓
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   double lastOpenPrice = GetLastOpenPrice();
-   if(lastOpenPrice == 0) return;
-
-   // 当前层的间距(USD转价格点)
-   double gapUSD = GetGapForLayer(cycleLayer + 1);
-   double pointVal = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE) /
-                     SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double gapPrice = (pointVal > 0) ? gapUSD / (pointVal * Inp_StartLots) : gapUSD;
-
-   // 中轨移动确认
-   double bb_mid[];
-   ArraySetAsSeries(bb_mid, true);
-   if(CopyBuffer(bbHandle, 0, 0, 1, bb_mid) < 1) return;
-   double midNow = bb_mid[0];
-
    if(cycleDirection == 1)
    {
-      // 做多: 价格下跌够间距 且 中轨也下移了
-      if(ask <= lastOpenPrice - gapPrice)
+      string comment = StringFormat("M1多L%d", cycleLayer + 1);
+      if(trade.Buy(nextLots, _Symbol, ask, 0, 0, comment))
       {
-         double midDrop = lastAddMidline - midNow;
-         if(midDrop < Inp_MidMove && cycleLayer >= 2) return; // L2起才要求中轨确认
-
-         string comment = StringFormat("M1多L%d", cycleLayer + 1);
-         if(trade.Buy(nextLots, _Symbol, ask, 0, 0, comment))
-         {
-            cycleLayer++;
-            lastAddBar = barCount;
-            lastAddMidline = midNow;
-            Print("+加仓 多L", cycleLayer, " @", ask, " Gap=", gapUSD,
-                  " Lots=", nextLots, " 总=", DoubleToString(GetCurrentTotalLots(), 2));
-         }
+         cycleLayer++;
+         lastAddBar = barCount;
+         rsiArmed = false;
+         Print("+加仓 多L", cycleLayer, " @", ask, " RSI=", DoubleToString(rsi,1),
+               " Lots=", nextLots, " 总=", DoubleToString(GetCurrentTotalLots(), 2));
       }
    }
-   else if(cycleDirection == -1)
+   else
    {
-      // 做空: 价格上涨够间距 且 中轨也上移了
-      if(bid >= lastOpenPrice + gapPrice)
+      string comment = StringFormat("M1空L%d", cycleLayer + 1);
+      if(trade.Sell(nextLots, _Symbol, bid, 0, 0, comment))
       {
-         double midRise = midNow - lastAddMidline;
-         if(midRise < Inp_MidMove && cycleLayer >= 2) return;
-
-         string comment = StringFormat("M1空L%d", cycleLayer + 1);
-         if(trade.Sell(nextLots, _Symbol, bid, 0, 0, comment))
-         {
-            cycleLayer++;
-            lastAddBar = barCount;
-            lastAddMidline = midNow;
-            Print("+加仓 空L", cycleLayer, " @", bid, " Gap=", gapUSD,
-                  " Lots=", nextLots, " 总=", DoubleToString(GetCurrentTotalLots(), 2));
-         }
+         cycleLayer++;
+         lastAddBar = barCount;
+         rsiArmed = false;
+         Print("+加仓 空L", cycleLayer, " @", bid, " RSI=", DoubleToString(rsi,1),
+               " Lots=", nextLots, " 总=", DoubleToString(GetCurrentTotalLots(), 2));
       }
    }
 }
@@ -534,35 +545,13 @@ double GetCurrentTotalLots()
    return total;
 }
 
-double GetLastOpenPrice()
-{
-   double lastPrice = 0;
-   datetime lastTime = 0;
-
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      ulong t = PositionGetTicket(i); if(t == 0) continue;
-      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
-      if(PositionGetInteger(POSITION_MAGIC) != Inp_MagicNumber) continue;
-
-      datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
-      if(openTime > lastTime)
-      {
-         lastTime = openTime;
-         lastPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-      }
-   }
-   return lastPrice;
-}
-
 //+------------------------------------------------------------------+
-//| 出场逻辑: 篮子止盈 / 回中轨止盈                                     |
+//| 出场                                                               |
 //+------------------------------------------------------------------+
 void CheckTakeProfit()
 {
    double totalProfit = CalcTotalProfit();
 
-   // 篮子止盈
    if(totalProfit >= Inp_TP_Basket)
    {
       Print("<<< 篮子止盈! 盈利=", DoubleToString(totalProfit, 2), " 层数=", cycleLayer);
@@ -570,10 +559,10 @@ void CheckTakeProfit()
       CloseAllPositions();
       cycleDirection = 0;
       cycleLayer = 0;
+      rsiArmed = false;
       return;
    }
 
-   // 回中轨止盈
    if(totalProfit >= Inp_TP_MidMin)
    {
       double bb_middle[];
@@ -595,6 +584,7 @@ void CheckTakeProfit()
          CloseAllPositions();
          cycleDirection = 0;
          cycleLayer = 0;
+         rsiArmed = false;
       }
    }
 }
@@ -624,9 +614,6 @@ void CloseAllPositions()
    }
 }
 
-//+------------------------------------------------------------------+
-//| 状态同步(EA重启时恢复持仓状态)                                      |
-//+------------------------------------------------------------------+
 void SyncCycleState()
 {
    cycleDirection = 0;
@@ -645,19 +632,11 @@ void SyncCycleState()
    }
 
    if(cycleLayer == 0) cycleDirection = 0;
-
-   // 恢复中轨记录
-   if(cycleDirection != 0)
-   {
-      double bb_mid[];
-      ArraySetAsSeries(bb_mid, true);
-      if(CopyBuffer(bbHandle, 0, 0, 1, bb_mid) >= 1)
-         lastAddMidline = bb_mid[0];
-   }
+   rsiArmed = false; // 重启时保守: 假设未装弹
 }
 
 //+------------------------------------------------------------------+
-//| 面板显示                                                           |
+//| 面板                                                               |
 //+------------------------------------------------------------------+
 void UpdatePanel()
 {
@@ -670,21 +649,21 @@ void UpdatePanel()
 
    string dir = (cycleDirection == 1) ? "做多" : (cycleDirection == -1) ? "做空" : "空仓";
 
-   CreateLbl(panelName+"t", 10, y, "=== BB马丁 M1 v2.0 ===", clrGold); y += lh + 4;
+   CreateLbl(panelName+"t", 10, y, "=== BB马丁 M1 v3.0 ===", clrGold); y += lh + 4;
    CreateLbl(panelName+"d", 10, y, StringFormat("%s L:%d/%d 手数:%.2f/%.2f", dir, cycleLayer, Inp_MaxLayers, totalLots, Inp_MaxTotalLots),
              cycleDirection==1?clrLime:cycleDirection==-1?clrRed:clrGray); y += lh;
 
    if(cycleDirection != 0)
    {
-      double nextGap = (cycleLayer < Inp_MaxLayers) ? GetGapForLayer(cycleLayer + 1) : 0;
-      CreateLbl(panelName+"p", 10, y, StringFormat("浮盈:%.2f 篮子TP:%.1f", pnl, Inp_TP_Basket),
+      CreateLbl(panelName+"p", 10, y, StringFormat("浮盈:%.2f 篮子TP:%.1f 中轨TP:%.1f", pnl, Inp_TP_Basket, Inp_TP_MidMin),
                 pnl >= 0 ? clrLime : clrRed); y += lh;
-      CreateLbl(panelName+"g", 10, y, StringFormat("下层间距:$%.0f 中轨确认:$%.1f", nextGap, Inp_MidMove), clrAqua); y += lh;
+      CreateLbl(panelName+"a", 10, y, StringFormat("RSI装弹:%s 距上次加仓:%d根", rsiArmed?"YES":"NO", barCount-lastAddBar),
+                rsiArmed?clrAqua:clrGray); y += lh;
    }
    else
    {
       CreateLbl(panelName+"p", 10, y, "", clrBlack); y += lh;
-      CreateLbl(panelName+"g", 10, y, "", clrBlack); y += lh;
+      CreateLbl(panelName+"a", 10, y, "", clrBlack); y += lh;
    }
 
    CreateLbl(panelName+"dd", 10, y, StringFormat("DD:%.1f%% 日亏:%.1f%% 浮亏:%.1f%%", dd, dayL, fl),
@@ -715,7 +694,7 @@ void CreateLbl(string nm, int x, int y, string txt, color c)
 }
 
 //+------------------------------------------------------------------+
-//| 数据导出: 实时状态                                                  |
+//| 数据导出                                                            |
 //+------------------------------------------------------------------+
 void ExportState()
 {
@@ -765,11 +744,13 @@ void ExportState()
    json += StringFormat("\"total_lots\":%.2f,", GetCurrentTotalLots());
    json += StringFormat("\"max_total_lots\":%.2f,", Inp_MaxTotalLots);
    json += StringFormat("\"floating_pnl\":%.2f,", CalcTotalProfit());
-   json += StringFormat("\"tp_target\":%.2f,", Inp_TP_Basket);
+   json += StringFormat("\"tp_basket\":%.2f,", Inp_TP_Basket);
+   json += StringFormat("\"tp_mid_min\":%.2f,", Inp_TP_MidMin);
+   json += StringFormat("\"rsi_armed\":%s,", rsiArmed?"true":"false");
+   json += StringFormat("\"bars_since_add\":%d,", barCount - lastAddBar);
    json += StringFormat("\"cycle_id\":%d", exportCycleId);
    json += "},\n";
 
-   // positions array
    json += "\"positions\":[";
    bool first = true;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
@@ -807,6 +788,8 @@ void ExportState()
    json += StringFormat("\"bb_lower\":%s,", DoubleToString(bb_l[0], _Digits));
    json += StringFormat("\"bb_width\":%.2f,", bb_u[0] - bb_l[0]);
    json += StringFormat("\"rsi\":%.1f,", rsiVal);
+   json += StringFormat("\"rsi_ob\":%.0f,", Inp_RSI_OB);
+   json += StringFormat("\"rsi_os\":%.0f,", Inp_RSI_OS);
    json += StringFormat("\"atr\":%.2f,", atrVal);
    json += StringFormat("\"spread\":%d,", (int)spd);
    json += StringFormat("\"bid\":%s,", DoubleToString(bid, _Digits));
@@ -818,9 +801,6 @@ void ExportState()
    FileClose(h);
 }
 
-//+------------------------------------------------------------------+
-//| 数据导出: 交易记录                                                  |
-//+------------------------------------------------------------------+
 void ExportTradeClose(string closeReason)
 {
    if(!Inp_Export) return;
@@ -849,9 +829,6 @@ void ExportTradeClose(string closeReason)
    FileClose(h);
 }
 
-//+------------------------------------------------------------------+
-//| 数据导出: 权益快照                                                  |
-//+------------------------------------------------------------------+
 void ExportEquitySnapshot()
 {
    if(!Inp_Export) return;
