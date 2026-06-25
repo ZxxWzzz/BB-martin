@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>BB马丁仓位规划工具 v2</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --buy: #3fb950;
+    --sell: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 16px;
+  }
+  h1 { font-size: 18px; color: var(--accent); margin-bottom: 12px; }
+  h2 { font-size: 14px; color: var(--muted); margin: 12px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .field { margin-bottom: 10px; }
+  label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  input[type="number"], input[type="text"], select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 13px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .btn-group { display: flex; gap: 6px; margin-top: 4px; }
+  .btn-group button {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .btn-group button.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+  /* 保证金对照卡 */
+  .balance-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+  }
+  .balance-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 8px;
+  }
+  .balance-card.danger { border-left-color: var(--red); }
+  .balance-card.warn { border-left-color: var(--yellow); }
+  .balance-card.ok { border-left-color: var(--green); }
+  .balance-card .bal { font-family: monospace; font-size: 14px; font-weight: bold; }
+  .balance-card .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .balance-card .layers { font-size: 16px; margin-top: 4px; font-family: monospace; }
+  .balance-card .detail { font-size: 11px; color: var(--muted); margin-top: 2px; font-family: monospace; }
+
+  /* 表格 */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: monospace;
+    font-size: 11px;
+  }
+  th, td {
+    text-align: right;
+    padding: 4px 4px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  th {
+    background: var(--bg);
+    color: var(--muted);
+    font-weight: normal;
+    text-align: right;
+    font-size: 10px;
+    text-transform: uppercase;
+    position: sticky;
+    top: 0;
+  }
+  th:first-child, td:first-child { text-align: left; }
+  td.ok { color: var(--green); font-weight: bold; }
+  td.fail { color: var(--red); }
+  td.warn { color: var(--yellow); }
+  td.entry { color: #f85149; }     /* 开仓价 红 */
+  td.avg { color: var(--accent); font-weight: bold; }  /* 回本价 蓝 */
+  td.tpmid { color: var(--yellow); }
+  td.tpbasket { color: var(--green); }
+
+  .table-scroll { overflow-x: auto; }
+
+  .legend {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-color { width: 12px; height: 12px; border-radius: 2px; }
+
+  /* 滑块 */
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+  }
+  .price-display {
+    font-family: monospace;
+    font-size: 18px;
+    font-weight: bold;
+    min-width: 100px;
+    text-align: right;
+  }
+
+  /* Canvas */
+  #vizCanvas { display: block; width: 100%; height: 420px; }
+
+  .note {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+
+<h1>BB马丁仓位规划工具 <span style="color:var(--muted); font-size:12px; font-weight: normal;">v2.0 多保证金对照</span></h1>
+
+<div class="layout">
+  <!-- 左侧:输入 -->
+  <div>
+    <div class="panel">
+      <h2 style="margin-top:0">📥 基础参数</h2>
+
+      <div class="field">
+        <label>起始价格 (L1开仓价)</label>
+        <input type="number" id="startPrice" value="4000" step="1">
+      </div>
+
+      <div class="field">
+        <label>方向</label>
+        <div class="btn-group">
+          <button id="dirBuy" class="active" onclick="setDirection(1)">做多 (BUY)</button>
+          <button id="dirSell" onclick="setDirection(-1)">做空 (SELL)</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>篮子止盈金额 (USD)</label>
+        <input type="number" id="tpBasket" value="8" step="0.5" min="0.5">
+      </div>
+
+      <div class="field">
+        <label>回中轨止盈金额 (USD)</label>
+        <input type="number" id="tpMid" value="2" step="0.5" min="0.5">
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">💰 保证金清单</h2>
+
+      <div class="field">
+        <label>账户余额列表 (逗号分隔, USD)</label>
+        <input type="text" id="balanceList" value="500,1000,2000,5000,10000">
+        <div class="note">每个余额对应一列对照</div>
+      </div>
+
+      <div class="field">
+        <label>强平触发百分比 (%)</label>
+        <input type="number" id="strikePct" value="50" step="5" min="10" max="100">
+        <div class="note">当浮亏 ≥ 余额 × 此% → 强平</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">⚙️ 马丁序列</h2>
+
+      <div class="field">
+        <label>预设方案</label>
+        <div class="btn-group">
+          <button onclick="loadPreset('safe')">保守</button>
+          <button onclick="loadPreset('std')" class="active">标准</button>
+          <button onclick="loadPreset('aggressive')">激进</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>手数序列 (L1...)</label>
+        <input type="text" id="lotSeq" value="0.01,0.01,0.02,0.02,0.03,0.04,0.05,0.07,0.10,0.12,0.13">
+      </div>
+
+      <div class="field">
+        <label>距离序列 USD (L2-LN间距)</label>
+        <input type="text" id="distSeq" value="4,5,6,7,8,9,10,11,12,14">
+      </div>
+
+      <div class="field">
+        <button onclick="exportCSV()" style="width:100%; background:var(--accent); border:none; color:white; padding:8px; border-radius:4px; cursor:pointer; font-size:12px;">📥 导出CSV (逐层数据)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右侧:输出 -->
+  <div>
+    <!-- 保证金对照卡 -->
+    <div class="panel">
+      <h2 style="margin-top:0">💳 各保证金对照</h2>
+      <div class="balance-cards" id="balanceCards"></div>
+    </div>
+
+    <!-- 盈亏比分析 -->
+    <div class="panel">
+      <h2 style="margin-top:0">⚖️ 盈亏比分析 (假设单次走极端)</h2>
+      <div class="table-scroll">
+        <table id="ratioTable"></table>
+      </div>
+      <div class="note">最大盈利 = 篮子TP $X; 最大亏损 = 余额×强平%; 保本胜率 = 不亏不赚需要的最低胜率</div>
+    </div>
+
+    <!-- 逐层详细 -->
+    <div class="panel">
+      <h2 style="margin-top:0">📋 逐层价格区间</h2>
+      <div class="legend">
+        <div class="legend-item"><span class="legend-color" style="background:#f85149"></span> 开仓价 (亏损开始)</div>
+        <div class="legend-item"><span class="legend-color" style="background:#58a6ff"></span> 均价/回本价 (亏→盈分界)</div>
+        <div class="legend-item"><span class="legend-color" style="background:#d29922"></span> 中轨TP价 ($)</div>
+        <div class="legend-item"><span class="legend-color" style="background:#3fb950"></span> 篮子TP价 ($)</div>
+      </div>
+      <div class="table-scroll">
+        <table id="layerTable"></table>
+      </div>
+    </div>
+
+    <!-- 可视化 -->
+    <div class="panel">
+      <h2 style="margin-top:0">💹 价格视图</h2>
+      <canvas id="vizCanvas" width="800" height="420"></canvas>
+    </div>
+
+    <!-- 滑块模拟 -->
+    <div class="panel">
+      <h2 style="margin-top:0">🎚 价格模拟 — 拖动看实时盈亏</h2>
+      <div class="slider-row">
+        <span style="font-size:11px;color:var(--muted)" id="sliderMin">$3900</span>
+        <input type="range" id="priceSlider" min="0" max="100" value="50" step="0.1">
+        <span style="font-size:11px;color:var(--muted)" id="sliderMax">$4100</span>
+      </div>
+      <div style="margin-top: 10px;">
+        <div style="display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap;">
+          <div>
+            <div style="font-size:11px;color:var(--muted)">模拟价</div>
+            <div class="price-display" id="simPrice">$4000.00</div>
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px">假设已开到 L_N 时的篮子盈亏</div>
+            <div id="simPnlContainer" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let direction = 1;
+
+function setDirection(d) {
+  direction = d;
+  document.getElementById('dirBuy').classList.toggle('active', d === 1);
+  document.getElementById('dirSell').classList.toggle('active', d === -1);
+  recompute();
+}
+
+function parseSeq(s) {
+  return s.split(',').map(x => parseFloat(x.trim())).filter(x => !isNaN(x));
+}
+
+function computeLayers() {
+  const startPrice = parseFloat(document.getElementById('startPrice').value);
+  const lots = parseSeq(document.getElementById('lotSeq').value);
+  const dists = parseSeq(document.getElementById('distSeq').value);
+  const tpBasket = parseFloat(document.getElementById('tpBasket').value);
+  const tpMid = parseFloat(document.getElementById('tpMid').value);
+  const balances = parseSeq(document.getElementById('balanceList').value);
+  const strikePct = parseFloat(document.getElementById('strikePct').value);
+
+  const layers = [];
+  let cumLot = 0;
+  let cumValue = 0;
+  let prevPrice = startPrice;
+
+  for (let i = 0; i < lots.length; i++) {
+    const lot = lots[i];
+    let openPrice;
+    if (i === 0) {
+      openPrice = startPrice;
+    } else {
+      const d = (i - 1 < dists.length) ? dists[i - 1] : dists[dists.length - 1];
+      openPrice = direction === 1 ? prevPrice - d : prevPrice + d;
+    }
+
+    cumLot = +(cumLot + lot).toFixed(2);
+    cumValue += openPrice * lot;
+    const avgPrice = cumValue / cumLot;
+
+    // 浮亏 = 当此层刚开仓(price=openPrice)时
+    const floatLoss = direction === 1
+      ? (avgPrice - openPrice) * cumLot * 100
+      : (openPrice - avgPrice) * cumLot * 100;
+
+    const tpBasketPrice = direction === 1
+      ? avgPrice + tpBasket / (cumLot * 100)
+      : avgPrice - tpBasket / (cumLot * 100);
+
+    const tpMidPrice = direction === 1
+      ? avgPrice + tpMid / (cumLot * 100)
+      : avgPrice - tpMid / (cumLot * 100);
+
+    layers.push({
+      n: i + 1,
+      openPrice,
+      lot,
+      cumLot,
+      avgPrice,        // 回本价 (从亏到盈的分界)
+      floatLoss,
+      tpBasketPrice,
+      tpMidPrice,
+    });
+
+    prevPrice = openPrice;
+  }
+
+  // 对每个余额: 找出最大可扛层
+  const balanceInfo = balances.map(bal => {
+    const maxLoss = bal * strikePct / 100;
+    let maxLayer = 0;
+    for (const L of layers) {
+      if (L.floatLoss <= maxLoss) maxLayer = L.n;
+      else break;
+    }
+    const lastSafe = maxLayer > 0 ? layers[maxLayer - 1] : null;
+    return { balance: bal, maxLoss, maxLayer, lastSafe };
+  });
+
+  return { layers, balances, balanceInfo, strikePct, tpBasket, tpMid, startPrice };
+}
+
+function recompute() {
+  const data = computeLayers();
+  renderBalanceCards(data);
+  renderRatioTable(data);
+  renderLayerTable(data);
+  drawViz(data);
+  updateSliderRange(data);
+  updateSimulation();
+}
+
+// 盈亏比分析: 显示每个余额下的最大盈利/最大亏损/保本胜率
+function renderRatioTable(data) {
+  const { balanceInfo, tpBasket, tpMid } = data;
+
+  let html = `<thead><tr>
+    <th>余额</th>
+    <th>最大盈利</th>
+    <th>最大亏损</th>
+    <th>盈亏比</th>
+    <th>保本胜率</th>
+    <th>评级</th>
+  </tr></thead><tbody>`;
+
+  balanceInfo.forEach(b => {
+    const maxWin = tpBasket;          // 篮子止盈是最大单笔盈利
+    const maxLoss = b.maxLoss;        // 强平=余额×强平%
+    const ratio = maxLoss / maxWin;   // 需要X次win才能弥补1次loss
+    const breakEvenWinRate = maxLoss / (maxLoss + maxWin) * 100;
+
+    let rating = '🟢 优秀';
+    let cls = 'ok';
+    if (breakEvenWinRate > 90) { rating = '🔴 极差'; cls = 'fail'; }
+    else if (breakEvenWinRate > 75) { rating = '🟡 偏差'; cls = 'warn'; }
+    else if (breakEvenWinRate > 60) { rating = '🟢 一般'; cls = 'warn'; }
+
+    html += `<tr>
+      <td><b>$${b.balance}</b></td>
+      <td class="tpbasket">+$${maxWin.toFixed(2)}</td>
+      <td style="color:var(--red)">-$${maxLoss.toFixed(2)}</td>
+      <td>1 : ${ratio.toFixed(1)}</td>
+      <td class="${cls}">${breakEvenWinRate.toFixed(1)}%</td>
+      <td>${rating}</td>
+    </tr>`;
+  });
+
+  html += '</tbody>';
+  document.getElementById('ratioTable').innerHTML = html;
+}
+
+// 预设方案
+const PRESETS = {
+  safe: {
+    name: '保守',
+    lotSeq: '0.01,0.01,0.01,0.02,0.02,0.03,0.04,0.05,0.07,0.09,0.10',
+    distSeq: '5,6,7,8,9,10,12,15,18,22',
+    tpBasket: 6,
+    tpMid: 1.5,
+  },
+  std: {
+    name: '标准',
+    lotSeq: '0.01,0.01,0.02,0.02,0.03,0.04,0.05,0.07,0.10,0.12,0.13',
+    distSeq: '4,5,6,7,8,9,10,11,12,14',
+    tpBasket: 8,
+    tpMid: 2,
+  },
+  aggressive: {
+    name: '激进',
+    lotSeq: '0.01,0.02,0.03,0.04,0.05,0.07,0.10,0.13,0.17,0.20,0.25',
+    distSeq: '3,4,5,6,7,8,9,10,11,12',
+    tpBasket: 10,
+    tpMid: 2.5,
+  },
+};
+
+function loadPreset(name) {
+  const p = PRESETS[name];
+  if (!p) return;
+  document.getElementById('lotSeq').value = p.lotSeq;
+  document.getElementById('distSeq').value = p.distSeq;
+  document.getElementById('tpBasket').value = p.tpBasket;
+  document.getElementById('tpMid').value = p.tpMid;
+  // 切换按钮高亮
+  document.querySelectorAll('.btn-group button[onclick^="loadPreset"]').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent === p.name);
+  });
+  recompute();
+}
+
+// CSV导出
+function exportCSV() {
+  const data = computeLayers();
+  const { layers, balanceInfo } = data;
+
+  const balHeaders = balanceInfo.map(b => `$${b.balance}可扛`).join(',');
+  let csv = `层,开仓价,本层手数,累计手数,均价/回本价,中轨TP价,篮子TP价,开仓时浮亏,${balHeaders}\n`;
+
+  layers.forEach(L => {
+    const balCells = balanceInfo.map(b => L.n <= b.maxLayer ? '是' : '否').join(',');
+    csv += `L${L.n},${L.openPrice.toFixed(2)},${L.lot.toFixed(2)},${L.cumLot.toFixed(2)},${L.avgPrice.toFixed(2)},${L.tpMidPrice.toFixed(2)},${L.tpBasketPrice.toFixed(2)},-${L.floatLoss.toFixed(2)},${balCells}\n`;
+  });
+
+  // 加 BOM 以便 Excel 正确显示中文
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `bb_martin_plan_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function renderBalanceCards(data) {
+  const { balanceInfo, layers } = data;
+  const totalLayers = layers.length;
+
+  const html = balanceInfo.map(b => {
+    const ratio = b.maxLayer / totalLayers;
+    let cls = 'ok';
+    if (ratio < 0.4) cls = 'danger';
+    else if (ratio < 0.7) cls = 'warn';
+
+    const sustainable = b.lastSafe;
+    const detail = sustainable
+      ? `均价 $${sustainable.avgPrice.toFixed(2)}<br>TP价 $${sustainable.tpBasketPrice.toFixed(2)}<br>浮亏 -$${sustainable.floatLoss.toFixed(1)}`
+      : '<span style="color:var(--red)">无法开仓</span>';
+
+    return `<div class="balance-card ${cls}">
+      <div class="bal">$${b.balance}</div>
+      <div class="meta">强平@$${b.maxLoss}</div>
+      <div class="layers">${b.maxLayer} / ${totalLayers} 层</div>
+      <div class="detail">${detail}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('balanceCards').innerHTML = html;
+}
+
+function renderLayerTable(data) {
+  const { layers, balanceInfo } = data;
+
+  // 表头
+  const balHeaders = balanceInfo.map(b => `<th>$${b.balance}</th>`).join('');
+  let html = `<thead><tr>
+    <th>层</th>
+    <th>开仓价</th>
+    <th>累计手数</th>
+    <th>均价(回本)</th>
+    <th>中轨TP价</th>
+    <th>篮子TP价</th>
+    <th>开仓时浮亏</th>
+    ${balHeaders}
+  </tr></thead><tbody>`;
+
+  layers.forEach(L => {
+    const balCells = balanceInfo.map(b => {
+      if (L.n <= b.maxLayer) {
+        const margin = b.maxLoss - L.floatLoss;
+        return `<td class="ok">✓ -$${margin.toFixed(0)}</td>`;
+      } else {
+        const excess = L.floatLoss - b.maxLoss;
+        return `<td class="fail">✗ +$${excess.toFixed(0)}</td>`;
+      }
+    }).join('');
+
+    html += `<tr>
+      <td><b>L${L.n}</b></td>
+      <td class="entry">${L.openPrice.toFixed(2)}</td>
+      <td>${L.cumLot.toFixed(2)}</td>
+      <td class="avg">${L.avgPrice.toFixed(2)}</td>
+      <td class="tpmid">${L.tpMidPrice.toFixed(2)}</td>
+      <td class="tpbasket">${L.tpBasketPrice.toFixed(2)}</td>
+      <td style="color:var(--red)">-${L.floatLoss.toFixed(2)}</td>
+      ${balCells}
+    </tr>`;
+  });
+
+  html += '</tbody>';
+  document.getElementById('layerTable').innerHTML = html;
+}
+
+function drawViz(data) {
+  const { layers, balanceInfo, startPrice } = data;
+  const canvas = document.getElementById('vizCanvas');
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width;
+  const H = rect.height;
+  ctx.clearRect(0, 0, W, H);
+
+  if (!layers.length) return;
+  const lastLayer = layers[layers.length - 1];
+
+  // 价格范围: 包括最深TP价和最深开仓价
+  const allPrices = [];
+  layers.forEach(L => {
+    allPrices.push(L.openPrice, L.tpBasketPrice, L.tpMidPrice, L.avgPrice);
+  });
+  const pmin = Math.min(...allPrices) - 5;
+  const pmax = Math.max(...allPrices) + 5;
+
+  const topY = 20;
+  const bottomY = H - 20;
+  const leftX = 60;
+  const rightX = W - 20;
+
+  function pToY(p) {
+    return topY + (pmax - p) / (pmax - pmin) * (bottomY - topY);
+  }
+
+  // 背景刻度
+  ctx.strokeStyle = 'rgba(48, 54, 61, 0.5)';
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'right';
+  const steps = 8;
+  for (let i = 0; i <= steps; i++) {
+    const p = pmin + (pmax - pmin) * (1 - i / steps);
+    const y = pToY(p);
+    ctx.fillText(p.toFixed(0), leftX - 6, y + 3);
+    ctx.beginPath();
+    ctx.moveTo(leftX, y);
+    ctx.lineTo(rightX, y);
+    ctx.stroke();
+  }
+
+  // 每个层 4条价位 (开仓/回本/中轨TP/篮子TP)
+  layers.forEach((L, i) => {
+    const xLayer = leftX + 20 + i * ((rightX - leftX - 40) / layers.length);
+
+    // 开仓价 (红点 - 亏损起点)
+    drawDot(ctx, xLayer, pToY(L.openPrice), '#f85149', `L${L.n}`);
+    // 回本价 (蓝点 - 亏盈分界)
+    drawDot(ctx, xLayer, pToY(L.avgPrice), '#58a6ff', '');
+    // 中轨TP (黄)
+    drawDot(ctx, xLayer, pToY(L.tpMidPrice), '#d29922', '');
+    // 篮子TP (绿)
+    drawDot(ctx, xLayer, pToY(L.tpBasketPrice), '#3fb950', '');
+
+    // 连接线
+    ctx.strokeStyle = 'rgba(200, 200, 200, 0.2)';
+    ctx.beginPath();
+    ctx.moveTo(xLayer, pToY(L.openPrice));
+    ctx.lineTo(xLayer, pToY(L.tpBasketPrice));
+    ctx.stroke();
+  });
+
+  // 各余额强平警戒线 (横线)
+  const colors = ['#ff6b35', '#f7931e', '#fcdc4d', '#86a800', '#229ed9'];
+  balanceInfo.forEach((b, i) => {
+    if (!b.lastSafe) return;
+    // 强平线 = lastSafe + 1 层的浮亏=maxLoss时的价格
+    // 用 lastSafe 的开仓价作为参考
+    const lastLayerStrikeIdx = b.maxLayer;
+    if (lastLayerStrikeIdx >= layers.length) return;
+    const nextL = layers[lastLayerStrikeIdx]; // 越限的那层
+    if (!nextL) return;
+    const yStrike = pToY(nextL.openPrice);
+
+    ctx.strokeStyle = colors[i % colors.length];
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(leftX, yStrike);
+    ctx.lineTo(rightX, yStrike);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.textAlign = 'left';
+    ctx.fillText(`$${b.balance} 强平@L${b.maxLayer + 1}`, rightX - 100, yStrike - 4);
+  });
+
+  // 顶部图例
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillStyle = '#c9d1d9';
+  ctx.textAlign = 'left';
+  ctx.fillText(direction === 1 ? '做多周期 价格视图' : '做空周期 价格视图', leftX, 12);
+}
+
+function drawDot(ctx, x, y, color, label) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, 4, 0, Math.PI * 2);
+  ctx.fill();
+  if (label) {
+    ctx.fillStyle = color;
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, x, y - 7);
+  }
+}
+
+function updateSliderRange(data) {
+  const { layers, startPrice } = data;
+  const last = layers[layers.length - 1];
+  const minP = Math.min(startPrice, last.openPrice) - 30;
+  const maxP = Math.max(startPrice, last.tpBasketPrice) + 30;
+  document.getElementById('sliderMin').textContent = '$' + minP.toFixed(0);
+  document.getElementById('sliderMax').textContent = '$' + maxP.toFixed(0);
+  const slider = document.getElementById('priceSlider');
+  slider.min = minP;
+  slider.max = maxP;
+  slider.step = 0.1;
+  if (!slider.dataset.userMoved) {
+    slider.value = startPrice;
+  }
+}
+
+function updateSimulation() {
+  const { layers } = computeLayers();
+  const slider = document.getElementById('priceSlider');
+  const simPrice = parseFloat(slider.value);
+  document.getElementById('simPrice').textContent = '$' + simPrice.toFixed(2);
+
+  const container = document.getElementById('simPnlContainer');
+  container.innerHTML = layers.map((L, i) => {
+    const n = i + 1;
+    const pnl = direction === 1
+      ? (simPrice - L.avgPrice) * L.cumLot * 100
+      : (L.avgPrice - simPrice) * L.cumLot * 100;
+    const color = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--muted)';
+    const bg = pnl > 0 ? 'rgba(63, 185, 80, 0.12)' : 'rgba(248, 81, 73, 0.12)';
+    return `<div style="background:${bg}; color:${color}; padding:4px 8px; border-radius:4px; font-family:monospace; font-size:11px; font-weight:bold;">
+      L${n}: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(1)}
+    </div>`;
+  }).join('');
+}
+
+// 事件
+['startPrice','lotSeq','distSeq','tpBasket','tpMid','balanceList','strikePct'].forEach(id => {
+  document.getElementById(id).addEventListener('input', recompute);
+});
+document.getElementById('priceSlider').addEventListener('input', (e) => {
+  e.target.dataset.userMoved = '1';
+  updateSimulation();
+});
+
+// 初始化
+recompute();
+window.addEventListener('resize', () => recompute());
+</script>
+</body>
+</html>
