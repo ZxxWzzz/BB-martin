@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>分层TP规划器</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --purple: #a371f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    padding: 16px;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 18px; color: var(--accent); margin-bottom: 8px; }
+  .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  h2 { font-size: 13px; color: var(--muted); margin-bottom: 10px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+
+  .field { margin-bottom: 10px; }
+  .field label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+  .field input[type="number"], .field input[type="text"] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 13px;
+  }
+  .field input:focus { outline: none; border-color: var(--accent); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  .btn-group { display: flex; gap: 4px; margin-top: 4px; }
+  .btn-group button {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 5px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+    flex: 1;
+  }
+  .btn-group button.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+  /* 分层参数编辑器 */
+  .layer-editor { max-height: 400px; overflow-y: auto; }
+  .layer-row {
+    display: grid;
+    grid-template-columns: 32px 60px 60px 70px 70px;
+    gap: 4px;
+    padding: 4px 0;
+    align-items: center;
+    font-family: monospace;
+    font-size: 11px;
+    border-bottom: 1px solid rgba(48,54,61,0.5);
+  }
+  .layer-row .head { color: var(--muted); font-size: 10px; }
+  .layer-row input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 3px 5px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 11px;
+    width: 100%;
+    text-align: right;
+  }
+  .layer-row .layer-tag { color: var(--accent); font-weight: bold; text-align: center; }
+
+  /* 图表 */
+  .chart-title { font-size: 13px; color: var(--text); font-weight: bold; margin-bottom: 4px; }
+  .chart-subtitle { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+  .chart-canvas { display: block; width: 100%; height: 340px; cursor: crosshair; }
+
+  .legend {
+    display: flex; gap: 14px; flex-wrap: wrap;
+    font-size: 11px; color: var(--muted); margin-top: 8px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  /* 关键指标卡 */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .kpi {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 8px 10px;
+  }
+  .kpi .label { color: var(--muted); font-size: 10px; }
+  .kpi .value { font-family: monospace; font-size: 15px; font-weight: bold; margin-top: 2px; }
+  .kpi .sub { color: var(--muted); font-size: 10px; margin-top: 2px; }
+
+  /* 数据表 */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: monospace;
+    font-size: 11px;
+  }
+  th, td {
+    text-align: right;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  th {
+    background: var(--bg);
+    color: var(--muted);
+    font-weight: normal;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+  th:first-child, td:first-child { text-align: left; }
+  td.entry { color: var(--red); }
+  td.avg { color: var(--accent); font-weight: bold; }
+  td.tp { color: var(--green); font-weight: bold; }
+  td.dist { color: var(--yellow); }
+
+  .tooltip {
+    position: fixed;
+    background: rgba(13, 17, 23, 0.95);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-family: monospace;
+    font-size: 11px;
+    pointer-events: none;
+    z-index: 1000;
+    display: none;
+    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+  .tooltip .tt-title { color: var(--accent); font-weight: bold; margin-bottom: 4px; }
+  .tooltip .tt-row { display: flex; justify-content: space-between; gap: 12px; }
+  .tooltip .tt-row .tt-label { color: var(--muted); }
+
+  .preset-bar {
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .preset-bar button {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .preset-bar button:hover { border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>分层TP规划器</h1>
+<div class="subtitle">"反弹"= 从均价到TP触发价的距离 · 实际需真实价格走的距离 = 反弹 + (均价-当前开仓价)</div>
+
+<div class="layout">
+  <!-- 左侧参数栏 -->
+  <div>
+    <div class="panel">
+      <h2>📥 基础参数</h2>
+      <div class="row2">
+        <div class="field">
+          <label>L1起始价</label>
+          <input type="number" id="startPrice" value="4000" step="1">
+        </div>
+        <div class="field">
+          <label>方向</label>
+          <div class="btn-group">
+            <button id="dirBuy" class="active" onclick="setDirection(1)">做多</button>
+            <button id="dirSell" onclick="setDirection(-1)">做空</button>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label>预设方案</label>
+        <div class="preset-bar">
+          <button onclick="loadPreset('current')">当前EA</button>
+          <button onclick="loadPreset('userA')">用户方案</button>
+          <button onclick="loadPreset('mild')">温和分层</button>
+          <button onclick="loadPreset('aggressive')">激进分层</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>⚙️ 分层参数 (可逐层调整)</h2>
+      <div class="layer-row">
+        <div class="head layer-tag">L</div>
+        <div class="head">距上层Δ</div>
+        <div class="head">手数</div>
+        <div class="head">反弹目标</div>
+        <div class="head">中轨TP</div>
+      </div>
+      <div class="layer-editor" id="layerEditor"></div>
+
+      <div class="field" style="margin-top: 10px">
+        <label>最大总手数 (硬限)</label>
+        <input type="number" id="maxTotalLots" value="0.60" step="0.05">
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>💰 账户参数</h2>
+      <div class="row2">
+        <div class="field">
+          <label>账户余额</label>
+          <input type="number" id="balance" value="2000" step="100">
+        </div>
+        <div class="field">
+          <label>强平%</label>
+          <input type="number" id="strikePct" value="50" step="5">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右侧图表&表格 -->
+  <div>
+    <!-- KPI -->
+    <div class="kpi-grid" id="kpiGrid"></div>
+
+    <!-- 图1: 收益曲线 -->
+    <div class="panel">
+      <div class="chart-title">💰 每层篮子TP收益 (触发时能赚多少)</div>
+      <div class="chart-subtitle">柱高 = 篮子TP盈利金额 · 越高越好</div>
+      <canvas id="profitChart" class="chart-canvas"></canvas>
+    </div>
+
+    <!-- 图2: 反弹曲线 -->
+    <div class="panel">
+      <div class="chart-title">📏 反弹与真实价格移动</div>
+      <div class="chart-subtitle">蓝: 反弹目标(均价→TP) · 橙: 实际需真实价格从"当前开仓价"走多少</div>
+      <canvas id="bounceChart" class="chart-canvas"></canvas>
+    </div>
+
+    <!-- 图3: 价格视图 -->
+    <div class="panel">
+      <div class="chart-title">💹 价格视图</div>
+      <div class="chart-subtitle">各层开仓价 / 均价 / 篮子TP价 / 中轨TP价</div>
+      <canvas id="priceChart" class="chart-canvas"></canvas>
+      <div class="legend">
+        <div class="legend-item"><span class="legend-dot" style="background:#f85149"></span> 开仓价</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#58a6ff"></span> 均价</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#3fb950"></span> 篮子TP价</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#d29922"></span> 中轨TP价</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#a371f7"></span> 强平线</div>
+      </div>
+    </div>
+
+    <!-- 数据表 -->
+    <div class="panel">
+      <h2>📋 完整数据表</h2>
+      <div style="overflow-x:auto">
+        <table id="dataTable"></table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+let direction = 1;
+const MAX_LAYERS = 11;
+
+// 预设方案
+const PRESETS = {
+  current: {
+    name: '当前EA',
+    dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
+    lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12, 0.13],
+    bounce: [8, 5, 2.88, 2.39, 1.88, 1.52, 1.28, 1.04, 0.82, 0.69, 0.63],
+    midTp:  [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+  },
+  userA: {
+    name: '用户方案',
+    dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
+    lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12, 0.13],
+    bounce: [8, 5, 4, 3, 2, 1, 1, 0.6, 0.4, 0.2, 0.1],
+    midTp:  [4, 4, 2.5, 2.5, 1.5, 1.5, 0.8, 0.5, 0.5, 0.3, 0.3],
+  },
+  mild: {
+    name: '温和分层',
+    dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
+    lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12, 0.13],
+    bounce: [8, 6, 4, 3, 2.5, 2, 1.5, 1, 0.8, 0.5, 0.3],
+    midTp:  [3, 3, 2, 2, 1.5, 1, 0.8, 0.5, 0.5, 0.3, 0.3],
+  },
+  aggressive: {
+    name: '激进分层',
+    dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
+    lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12, 0.13],
+    bounce: [10, 6, 5, 4, 3, 2, 1.2, 0.8, 0.5, 0.3, 0.15],
+    midTp:  [5, 4, 3, 2.5, 2, 1.5, 1, 0.5, 0.5, 0.3, 0.2],
+  },
+};
+
+// 当前分层参数(可编辑)
+let LAYERS = JSON.parse(JSON.stringify(PRESETS.userA));
+
+function setDirection(d) {
+  direction = d;
+  document.getElementById('dirBuy').classList.toggle('active', d === 1);
+  document.getElementById('dirSell').classList.toggle('active', d === -1);
+  recompute();
+}
+
+function loadPreset(name) {
+  LAYERS = JSON.parse(JSON.stringify(PRESETS[name]));
+  renderLayerEditor();
+  recompute();
+}
+
+// 渲染分层编辑器
+function renderLayerEditor() {
+  const container = document.getElementById('layerEditor');
+  let html = '';
+  for (let i = 0; i < MAX_LAYERS; i++) {
+    html += `<div class="layer-row">
+      <div class="layer-tag">L${i+1}</div>
+      <input type="number" value="${LAYERS.dist[i]}" step="0.5" min="0" ${i===0?'disabled':''} data-key="dist" data-idx="${i}">
+      <input type="number" value="${LAYERS.lot[i]}" step="0.01" min="0.01" data-key="lot" data-idx="${i}">
+      <input type="number" value="${LAYERS.bounce[i]}" step="0.1" min="0.05" data-key="bounce" data-idx="${i}">
+      <input type="number" value="${LAYERS.midTp[i]}" step="0.5" min="0.1" data-key="midTp" data-idx="${i}">
+    </div>`;
+  }
+  container.innerHTML = html;
+  container.querySelectorAll('input').forEach(inp => {
+    inp.addEventListener('input', (e) => {
+      const key = e.target.dataset.key;
+      const idx = parseInt(e.target.dataset.idx);
+      LAYERS[key][idx] = parseFloat(e.target.value) || 0;
+      recompute();
+    });
+  });
+}
+
+// 计算所有层的完整数据
+function compute() {
+  const startPrice = parseFloat(document.getElementById('startPrice').value);
+  const balance = parseFloat(document.getElementById('balance').value);
+  const strikePct = parseFloat(document.getElementById('strikePct').value);
+  const maxLoss = balance * strikePct / 100;
+
+  const rows = [];
+  let cumLot = 0, cumValue = 0, prevPrice = startPrice;
+
+  for (let i = 0; i < MAX_LAYERS; i++) {
+    const lot = LAYERS.lot[i];
+    let openPrice;
+    if (i === 0) openPrice = startPrice;
+    else openPrice = direction === 1 ? prevPrice - LAYERS.dist[i] : prevPrice + LAYERS.dist[i];
+
+    cumLot = +(cumLot + lot).toFixed(4);
+    cumValue += openPrice * lot;
+    const avg = cumValue / cumLot;
+
+    const lag = direction === 1 ? avg - openPrice : openPrice - avg;
+    const floatLoss = lag * cumLot * 100;
+
+    const bounce = LAYERS.bounce[i];  // 反弹目标(均价→TP)
+    const basketTPPrice = direction === 1 ? avg + bounce : avg - bounce;
+    const basketProfit = bounce * cumLot * 100;
+
+    const midTPUsd = LAYERS.midTp[i];
+    const midBounce = midTPUsd / (cumLot * 100);
+    const midTPPrice = direction === 1 ? avg + midBounce : avg - midBounce;
+
+    // 从当前开仓价到TP触发价的距离
+    const priceMoveToTP = direction === 1 ? basketTPPrice - openPrice : openPrice - basketTPPrice;
+
+    rows.push({
+      n: i+1, openPrice, lot, cumLot, avg, lag, floatLoss,
+      bounce, basketTPPrice, basketProfit, midTPUsd, midTPPrice,
+      priceMoveToTP,
+      canSustain: floatLoss <= maxLoss,
+    });
+    prevPrice = openPrice;
+  }
+  return { rows, maxLoss, balance };
+}
+
+function recompute() {
+  const data = compute();
+  renderKPI(data);
+  renderTable(data);
+  drawProfitChart(data);
+  drawBounceChart(data);
+  drawPriceChart(data);
+}
+
+function renderKPI(data) {
+  const { rows, maxLoss } = data;
+  const totalLots = rows[rows.length - 1].cumLot;
+  const totalDist = Math.abs(rows[rows.length - 1].openPrice - rows[0].openPrice);
+  const maxProfitLayer = rows.reduce((a,b) => b.basketProfit > a.basketProfit ? b : a);
+  const maxProfit = maxProfitLayer.basketProfit;
+  const minProfit = Math.min(...rows.map(r => r.basketProfit));
+
+  let sustainMax = 0;
+  for (const r of rows) {
+    if (r.canSustain) sustainMax = r.n;
+    else break;
+  }
+
+  const avgProfit = rows.reduce((s,r) => s + r.basketProfit, 0) / rows.length;
+
+  document.getElementById('kpiGrid').innerHTML = `
+    <div class="kpi"><div class="label">价格覆盖</div><div class="value">$${totalDist.toFixed(0)}</div><div class="sub">L1→L${rows.length}</div></div>
+    <div class="kpi"><div class="label">总手数</div><div class="value">${totalLots.toFixed(2)}</div><div class="sub">/ 硬限 ${document.getElementById('maxTotalLots').value}</div></div>
+    <div class="kpi"><div class="label">最大单笔</div><div class="value" style="color:var(--green)">$${maxProfit.toFixed(2)}</div><div class="sub">L${maxProfitLayer.n}</div></div>
+    <div class="kpi"><div class="label">最小单笔</div><div class="value" style="color:var(--yellow)">$${minProfit.toFixed(2)}</div></div>
+    <div class="kpi"><div class="label">平均单笔</div><div class="value">$${avgProfit.toFixed(2)}</div></div>
+    <div class="kpi"><div class="label">$${data.balance}账户可扛</div><div class="value" style="color:${sustainMax<5?'var(--red)':sustainMax<8?'var(--yellow)':'var(--green)'}">${sustainMax}/${rows.length}层</div></div>
+  `;
+}
+
+function renderTable(data) {
+  const { rows } = data;
+  let html = `<thead><tr>
+    <th>层</th><th>距上</th><th>手数</th><th>累计</th>
+    <th>开仓价</th><th>均价</th><th>反弹</th><th>篮子TP价</th>
+    <th>篮子收益</th><th>中轨TP价</th><th>中轨收益</th>
+    <th>真实需走</th><th>浮亏</th>
+  </tr></thead><tbody>`;
+  rows.forEach(r => {
+    html += `<tr>
+      <td><b>L${r.n}</b></td>
+      <td>${r.n===1?'-':LAYERS.dist[r.n-1].toFixed(1)}</td>
+      <td>${r.lot.toFixed(2)}</td>
+      <td>${r.cumLot.toFixed(2)}</td>
+      <td class="entry">${r.openPrice.toFixed(2)}</td>
+      <td class="avg">${r.avg.toFixed(2)}</td>
+      <td class="dist">${r.bounce.toFixed(2)}</td>
+      <td class="tp">${r.basketTPPrice.toFixed(2)}</td>
+      <td style="color:var(--green)">+$${r.basketProfit.toFixed(2)}</td>
+      <td>${r.midTPPrice.toFixed(2)}</td>
+      <td>+$${r.midTPUsd.toFixed(2)}</td>
+      <td style="color:${r.priceMoveToTP > 10 ? 'var(--red)' : 'var(--text)'}">+$${r.priceMoveToTP.toFixed(2)}</td>
+      <td style="color:var(--red)">-$${r.floatLoss.toFixed(0)}</td>
+    </tr>`;
+  });
+  html += '</tbody>';
+  document.getElementById('dataTable').innerHTML = html;
+}
+
+// 通用画布
+function setupCanvas(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return { ctx, W: rect.width, H: rect.height };
+}
+
+// 图1: 收益柱状图
+function drawProfitChart(data) {
+  const { rows } = data;
+  const canvas = document.getElementById('profitChart');
+  const { ctx, W, H } = setupCanvas(canvas);
+  ctx.clearRect(0, 0, W, H);
+
+  const maxP = Math.max(...rows.map(r => r.basketProfit), 5);
+  const left = 50, right = W-20, top = 20, bottom = H-40;
+  const yScale = (v) => bottom - v/maxP * (bottom-top);
+  const barW = (right-left) / rows.length * 0.7;
+  const gapW = (right-left) / rows.length;
+
+  // Y轴
+  ctx.strokeStyle = 'rgba(48,54,61,0.5)';
+  ctx.font = '10px monospace';
+  ctx.fillStyle = '#8b949e';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 5; i++) {
+    const v = maxP * i / 5;
+    const y = yScale(v);
+    ctx.fillText('$'+v.toFixed(0), left-6, y+3);
+    ctx.beginPath();
+    ctx.moveTo(left, y); ctx.lineTo(right, y);
+    ctx.stroke();
+  }
+
+  // 柱
+  rows.forEach((r, i) => {
+    const x = left + gapW * (i + 0.15);
+    const y = yScale(r.basketProfit);
+    const h = bottom - y;
+    ctx.fillStyle = r.basketProfit >= 10 ? '#3fb950' : r.basketProfit >= 5 ? '#58a6ff' : '#d29922';
+    ctx.fillRect(x, y, barW, h);
+    ctx.fillStyle = '#c9d1d9';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('$'+r.basketProfit.toFixed(1), x + barW/2, y - 4);
+    ctx.font = '10px monospace';
+    ctx.fillStyle = '#8b949e';
+    ctx.fillText('L'+r.n, x + barW/2, bottom + 15);
+  });
+}
+
+// 图2: 反弹要求曲线
+function drawBounceChart(data) {
+  const { rows } = data;
+  const canvas = document.getElementById('bounceChart');
+  const { ctx, W, H } = setupCanvas(canvas);
+  ctx.clearRect(0, 0, W, H);
+
+  const maxV = Math.max(...rows.map(r => Math.max(r.bounce, r.priceMoveToTP)), 5);
+  const left = 50, right = W-20, top = 20, bottom = H-40;
+  const yScale = (v) => bottom - v/maxV * (bottom-top);
+  const xScale = (n) => left + (n-0.5)/rows.length * (right-left);
+
+  ctx.strokeStyle = 'rgba(48,54,61,0.5)';
+  ctx.font = '10px monospace';
+  ctx.fillStyle = '#8b949e';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 5; i++) {
+    const v = maxV * i / 5;
+    const y = yScale(v);
+    ctx.fillText('$'+v.toFixed(1), left-6, y+3);
+    ctx.beginPath();
+    ctx.moveTo(left, y); ctx.lineTo(right, y);
+    ctx.stroke();
+  }
+
+  // 反弹目标(蓝)
+  ctx.strokeStyle = '#58a6ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  rows.forEach((r, i) => {
+    const x = xScale(r.n), y = yScale(r.bounce);
+    if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  ctx.fillStyle = '#58a6ff';
+  rows.forEach(r => {
+    const x = xScale(r.n), y = yScale(r.bounce);
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
+  });
+
+  // 真实价格移动(橙)
+  ctx.strokeStyle = '#d29922';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  rows.forEach((r, i) => {
+    const x = xScale(r.n), y = yScale(r.priceMoveToTP);
+    if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  ctx.fillStyle = '#d29922';
+  rows.forEach(r => {
+    const x = xScale(r.n), y = yScale(r.priceMoveToTP);
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
+  });
+
+  // X 轴标签
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#8b949e';
+  rows.forEach(r => ctx.fillText('L'+r.n, xScale(r.n), bottom+15));
+
+  // 图例
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#58a6ff';
+  ctx.fillText('● 反弹目标(均价→TP)', left, top-5);
+  ctx.fillStyle = '#d29922';
+  ctx.fillText('● 真实价格需走(开仓→TP)', left+180, top-5);
+}
+
+// 图3: 价格视图
+function drawPriceChart(data) {
+  const { rows, maxLoss } = data;
+  const canvas = document.getElementById('priceChart');
+  const { ctx, W, H } = setupCanvas(canvas);
+  ctx.clearRect(0, 0, W, H);
+
+  const prices = [];
+  rows.forEach(r => prices.push(r.openPrice, r.avg, r.basketTPPrice, r.midTPPrice));
+  let pMin = Math.min(...prices), pMax = Math.max(...prices);
+
+  // 强平线的价格 (第一个 not sustain 层的开仓价)
+  let strikePrice = null;
+  for (const r of rows) {
+    if (!r.canSustain) { strikePrice = r.openPrice; break; }
+  }
+  if (strikePrice !== null) { pMin = Math.min(pMin, strikePrice); pMax = Math.max(pMax, strikePrice); }
+
+  const pad = (pMax - pMin) * 0.1;
+  const yMin = pMin - pad, yMax = pMax + pad;
+
+  const left = 55, right = W-20, top = 20, bottom = H-40;
+  const yScale = (p) => top + (yMax-p)/(yMax-yMin) * (bottom-top);
+  const xScale = (n) => left + (n-0.5)/rows.length * (right-left);
+
+  ctx.strokeStyle = 'rgba(48,54,61,0.5)';
+  ctx.font = '10px monospace';
+  ctx.fillStyle = '#8b949e';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 6; i++) {
+    const p = yMin + (yMax-yMin) * (1-i/6);
+    const y = yScale(p);
+    ctx.fillText(p.toFixed(1), left-6, y+3);
+    ctx.beginPath();
+    ctx.moveTo(left, y); ctx.lineTo(right, y);
+    ctx.stroke();
+  }
+
+  const series = [
+    { key: 'openPrice', color: '#f85149' },
+    { key: 'avg', color: '#58a6ff' },
+    { key: 'basketTPPrice', color: '#3fb950' },
+    { key: 'midTPPrice', color: '#d29922' },
+  ];
+  series.forEach(s => {
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    rows.forEach((r, i) => {
+      const x = xScale(r.n), y = yScale(r[s.key]);
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = s.color;
+    rows.forEach(r => {
+      const x = xScale(r.n), y = yScale(r[s.key]);
+      ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI*2); ctx.fill();
+    });
+  });
+
+  // 强平线
+  if (strikePrice !== null) {
+    const y = yScale(strikePrice);
+    ctx.strokeStyle = '#a371f7';
+    ctx.setLineDash([5,3]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(left, y); ctx.lineTo(right, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#a371f7';
+    ctx.textAlign = 'left';
+    ctx.fillText('$'+data.balance+' 强平@'+strikePrice.toFixed(0), left+4, y-4);
+  }
+
+  // X轴
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#8b949e';
+  rows.forEach(r => ctx.fillText('L'+r.n, xScale(r.n), bottom+15));
+
+  // Tooltip
+  const tt = document.getElementById('tooltip');
+  canvas.onmousemove = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    let nearest = null, minDx = 999;
+    rows.forEach(r => {
+      const rx = xScale(r.n);
+      if (Math.abs(x-rx) < minDx) { minDx = Math.abs(x-rx); nearest = r; }
+    });
+    if (nearest && minDx < (rect.width/rows.length/2)) {
+      tt.innerHTML = `<div class="tt-title">L${nearest.n}</div>
+        <div class="tt-row"><span class="tt-label">开仓价:</span> $${nearest.openPrice.toFixed(2)}</div>
+        <div class="tt-row"><span class="tt-label">均价:</span> $${nearest.avg.toFixed(2)}</div>
+        <div class="tt-row"><span class="tt-label">篮子TP价:</span> $${nearest.basketTPPrice.toFixed(2)}</div>
+        <div class="tt-row"><span class="tt-label">中轨TP价:</span> $${nearest.midTPPrice.toFixed(2)}</div>
+        <div class="tt-row"><span class="tt-label">篮子盈利:</span> +$${nearest.basketProfit.toFixed(2)}</div>
+        <div class="tt-row"><span class="tt-label">真实需走:</span> $${nearest.priceMoveToTP.toFixed(2)}</div>
+        <div class="tt-row"><span class="tt-label">此层浮亏:</span> -$${nearest.floatLoss.toFixed(0)}</div>`;
+      tt.style.display = 'block';
+      tt.style.left = (e.clientX+12)+'px';
+      tt.style.top = (e.clientY+12)+'px';
+    } else tt.style.display = 'none';
+  };
+  canvas.onmouseleave = () => tt.style.display = 'none';
+}
+
+// 事件绑定
+['startPrice', 'balance', 'strikePct', 'maxTotalLots'].forEach(id => {
+  document.getElementById(id).addEventListener('input', recompute);
+});
+window.addEventListener('resize', () => recompute());
+
+// 初始化
+renderLayerEditor();
+recompute();
+</script>
+</body>
+</html>
