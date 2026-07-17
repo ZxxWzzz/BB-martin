@@ -291,7 +291,8 @@
 
     <!-- 数据表 -->
     <div class="panel">
-      <h2>📋 完整数据表</h2>
+      <h2>📋 简化数据表 · 每层达到盈利的价格</h2>
+      <div class="subtitle" style="margin-bottom:8px">开仓价 → 涨到 TP触发价 才能拿到盈利 · 绿≤$8易 黄$8-15中 红>$15难</div>
       <div style="overflow-x:auto">
         <table id="dataTable"></table>
       </div>
@@ -460,25 +461,21 @@ function renderKPI(data) {
 function renderTable(data) {
   const { rows } = data;
   let html = `<thead><tr>
-    <th>层</th><th>距上</th><th>手数</th><th>累计</th>
-    <th>开仓价</th><th>均价</th><th>反弹</th><th>篮子TP价</th>
-    <th>篮子收益</th><th>中轨TP价</th><th>中轨收益</th>
-    <th>真实需走</th><th>浮亏</th>
+    <th>层</th>
+    <th>开仓价</th>
+    <th>TP触发价</th>
+    <th>价格需走</th>
+    <th>盈利</th>
+    <th>浮亏</th>
   </tr></thead><tbody>`;
   rows.forEach(r => {
+    const walkColor = r.priceMoveToTP > 15 ? 'var(--red)' : r.priceMoveToTP > 8 ? 'var(--yellow)' : 'var(--green)';
     html += `<tr>
       <td><b>L${r.n}</b></td>
-      <td>${r.n===1?'-':LAYERS.dist[r.n-1].toFixed(1)}</td>
-      <td>${r.lot.toFixed(2)}</td>
-      <td>${r.cumLot.toFixed(2)}</td>
-      <td class="entry">${r.openPrice.toFixed(2)}</td>
-      <td class="avg">${r.avg.toFixed(2)}</td>
-      <td class="dist">${r.bounce.toFixed(2)}</td>
-      <td class="tp">${r.basketTPPrice.toFixed(2)}</td>
+      <td class="entry">$${r.openPrice.toFixed(2)}</td>
+      <td class="tp">$${r.basketTPPrice.toFixed(2)}</td>
+      <td style="color:${walkColor}">+$${r.priceMoveToTP.toFixed(2)}</td>
       <td style="color:var(--green)">+$${r.basketProfit.toFixed(2)}</td>
-      <td>${r.midTPPrice.toFixed(2)}</td>
-      <td>+$${r.midTPUsd.toFixed(2)}</td>
-      <td style="color:${r.priceMoveToTP > 10 ? 'var(--red)' : 'var(--text)'}">+$${r.priceMoveToTP.toFixed(2)}</td>
       <td style="color:var(--red)">-$${r.floatLoss.toFixed(0)}</td>
     </tr>`;
   });
