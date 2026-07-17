@@ -216,10 +216,9 @@
       <div class="field">
         <label>预设方案</label>
         <div class="preset-bar">
-          <button onclick="loadPreset('current')">当前EA</button>
-          <button onclick="loadPreset('userA')">用户方案</button>
-          <button onclick="loadPreset('mild')">温和分层</button>
-          <button onclick="loadPreset('aggressive')">激进分层</button>
+          <button onclick="loadPreset('current')">当前EA(v5)</button>
+          <button onclick="loadPreset('v6_conservative')">v6保守</button>
+          <button onclick="loadPreset('v6_aggressive')">v6激进</button>
         </div>
       </div>
     </div>
@@ -309,37 +308,30 @@ const MAX_LAYERS = 11;
 // 预设方案
 const PRESETS = {
   current: {
-    name: '当前EA',
+    name: '当前EA(v5)',
     dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
     lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12, 0.13],
     bounce: [8, 5, 2.88, 2.39, 1.88, 1.52, 1.28, 1.04, 0.82, 0.69, 0.63],
     midTp:  [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
   },
-  userA: {
-    name: '用户方案',
+  v6_conservative: {
+    name: 'v6保守',
     dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
-    lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12, 0.13],
-    bounce: [8, 5, 4, 3, 2, 1, 1, 0.6, 0.4, 0.2, 0.1],
-    midTp:  [4, 4, 2.5, 2.5, 1.5, 1.5, 0.8, 0.5, 0.5, 0.3, 0.3],
+    lot:    [0.02, 0.02, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.09, 0.09],
+    bounce: [6, 4, 3, 2.5, 2, 1.5, 1, 0.5, 0.3, 0.2, 0.1],
+    midTp:  [3, 2.5, 2, 2, 1.5, 1, 0.8, 0.5, 0.3, 0.2, 0.15],
   },
-  mild: {
-    name: '温和分层',
+  v6_aggressive: {
+    name: 'v6激进',
     dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
-    lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12, 0.13],
-    bounce: [8, 6, 4, 3, 2.5, 2, 1.5, 1, 0.8, 0.5, 0.3],
-    midTp:  [3, 3, 2, 2, 1.5, 1, 0.8, 0.5, 0.5, 0.3, 0.3],
-  },
-  aggressive: {
-    name: '激进分层',
-    dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
-    lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12, 0.13],
-    bounce: [10, 6, 5, 4, 3, 2, 1.2, 0.8, 0.5, 0.3, 0.15],
-    midTp:  [5, 4, 3, 2.5, 2, 1.5, 1, 0.5, 0.5, 0.3, 0.2],
+    lot:    [0.02, 0.02, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.09, 0.09],
+    bounce: [5, 3, 2.5, 2, 1.5, 1, 0.7, 0.4, 0.25, 0.15, 0.1],
+    midTp:  [2.5, 2, 1.5, 1.5, 1, 0.8, 0.5, 0.3, 0.2, 0.15, 0.1],
   },
 };
 
 // 当前分层参数(可编辑)
-let LAYERS = JSON.parse(JSON.stringify(PRESETS.userA));
+let LAYERS = JSON.parse(JSON.stringify(PRESETS.current));
 
 function setDirection(d) {
   direction = d;
