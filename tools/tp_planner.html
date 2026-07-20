@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <title>分层TP规划器</title>
 <style>
-  :root {
+  /* 深色主题(默认) */
+  :root, :root[data-theme="dark"] {
     --bg: #0d1117;
     --panel: #161b22;
     --border: #30363d;
@@ -15,7 +16,44 @@
     --yellow: #d29922;
     --red: #f85149;
     --purple: #a371f7;
+    --input-bg: #0d1117;
+    --shadow: rgba(0,0,0,0.5);
   }
+  /* 明亮主题 */
+  :root[data-theme="light"] {
+    --bg: #ffffff;
+    --panel: #f6f8fa;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --muted: #656d76;
+    --accent: #0969da;
+    --green: #1a7f37;
+    --yellow: #9a6700;
+    --red: #cf222e;
+    --purple: #8250df;
+    --input-bg: #ffffff;
+    --shadow: rgba(31,35,40,0.15);
+  }
+
+  /* 主题切换按钮 */
+  .theme-toggle {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 200;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 2px 8px var(--shadow);
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     background: var(--bg);
@@ -201,6 +239,11 @@
 </style>
 </head>
 <body>
+
+<button class="theme-toggle" onclick="toggleTheme()">
+  <span id="themeIcon">🌙</span>
+  <span id="themeLabel">深色</span>
+</button>
 
 <h1>分层TP规划器</h1>
 <div class="subtitle">"反弹"= 从均价到TP触发价的距离 · 实际需真实价格走的距离 = 反弹 + (均价-当前开仓价)</div>
@@ -530,6 +573,23 @@ function setupCanvas(canvas) {
   return { ctx, W: rect.width, H: rect.height };
 }
 
+// 读取当前主题的 CSS 变量, 让 canvas 也跟着主题变色
+function themeColor(varName) {
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+}
+function getChartColors() {
+  return {
+    muted: themeColor('--muted'),
+    text: themeColor('--text'),
+    grid: themeColor('--border'),
+    accent: themeColor('--accent'),
+    green: themeColor('--green'),
+    yellow: themeColor('--yellow'),
+    red: themeColor('--red'),
+    purple: themeColor('--purple'),
+  };
+}
+
 // 图1: 收益柱状图
 function drawProfitChart(data) {
   const { rows } = data;
@@ -544,9 +604,10 @@ function drawProfitChart(data) {
   const gapW = (right-left) / rows.length;
 
   // Y轴
-  ctx.strokeStyle = 'rgba(48,54,61,0.5)';
+  const C = getChartColors();
+  ctx.strokeStyle = C.grid;
   ctx.font = '10px monospace';
-  ctx.fillStyle = '#8b949e';
+  ctx.fillStyle = C.muted;
   ctx.textAlign = 'right';
   for (let i = 0; i <= 5; i++) {
     const v = maxP * i / 5;
@@ -562,14 +623,14 @@ function drawProfitChart(data) {
     const x = left + gapW * (i + 0.15);
     const y = yScale(r.basketProfit);
     const h = bottom - y;
-    ctx.fillStyle = r.basketProfit >= 10 ? '#3fb950' : r.basketProfit >= 5 ? '#58a6ff' : '#d29922';
+    ctx.fillStyle = r.basketProfit >= 10 ? C.green : r.basketProfit >= 5 ? C.accent : C.yellow;
     ctx.fillRect(x, y, barW, h);
-    ctx.fillStyle = '#c9d1d9';
+    ctx.fillStyle = C.text;
     ctx.textAlign = 'center';
     ctx.font = 'bold 11px monospace';
     ctx.fillText('$'+r.basketProfit.toFixed(1), x + barW/2, y - 4);
     ctx.font = '10px monospace';
-    ctx.fillStyle = '#8b949e';
+    ctx.fillStyle = C.muted;
     ctx.fillText('L'+r.n, x + barW/2, bottom + 15);
   });
 }
@@ -586,9 +647,10 @@ function drawBounceChart(data) {
   const yScale = (v) => bottom - v/maxV * (bottom-top);
   const xScale = (n) => left + (n-0.5)/rows.length * (right-left);
 
-  ctx.strokeStyle = 'rgba(48,54,61,0.5)';
+  const C = getChartColors();
+  ctx.strokeStyle = C.grid;
   ctx.font = '10px monospace';
-  ctx.fillStyle = '#8b949e';
+  ctx.fillStyle = C.muted;
   ctx.textAlign = 'right';
   for (let i = 0; i <= 5; i++) {
     const v = maxV * i / 5;
@@ -600,7 +662,7 @@ function drawBounceChart(data) {
   }
 
   // 反弹目标(蓝)
-  ctx.strokeStyle = '#58a6ff';
+  ctx.strokeStyle = C.accent;
   ctx.lineWidth = 2;
   ctx.beginPath();
   rows.forEach((r, i) => {
@@ -608,14 +670,14 @@ function drawBounceChart(data) {
     if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
   });
   ctx.stroke();
-  ctx.fillStyle = '#58a6ff';
+  ctx.fillStyle = C.accent;
   rows.forEach(r => {
     const x = xScale(r.n), y = yScale(r.bounce);
     ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
   });
 
   // 真实价格移动(橙)
-  ctx.strokeStyle = '#d29922';
+  ctx.strokeStyle = C.yellow;
   ctx.lineWidth = 2;
   ctx.beginPath();
   rows.forEach((r, i) => {
@@ -623,7 +685,7 @@ function drawBounceChart(data) {
     if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
   });
   ctx.stroke();
-  ctx.fillStyle = '#d29922';
+  ctx.fillStyle = C.yellow;
   rows.forEach(r => {
     const x = xScale(r.n), y = yScale(r.priceMoveToTP);
     ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
@@ -631,14 +693,14 @@ function drawBounceChart(data) {
 
   // X 轴标签
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#8b949e';
+  ctx.fillStyle = C.muted;
   rows.forEach(r => ctx.fillText('L'+r.n, xScale(r.n), bottom+15));
 
   // 图例
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#58a6ff';
+  ctx.fillStyle = C.accent;
   ctx.fillText('● 反弹目标(均价→TP)', left, top-5);
-  ctx.fillStyle = '#d29922';
+  ctx.fillStyle = C.yellow;
   ctx.fillText('● 真实价格需走(开仓→TP)', left+180, top-5);
 }
 
@@ -678,9 +740,10 @@ function drawPriceChart(data) {
   const yScale = (p) => top + (yMax-p)/(yMax-yMin) * (bottom-top);
   const xScale = (n) => left + (n-0.5)/rows.length * (right-left);
 
-  ctx.strokeStyle = 'rgba(48,54,61,0.5)';
+  const C = getChartColors();
+  ctx.strokeStyle = C.grid;
   ctx.font = '10px monospace';
-  ctx.fillStyle = '#8b949e';
+  ctx.fillStyle = C.muted;
   ctx.textAlign = 'right';
   for (let i = 0; i <= 6; i++) {
     const p = yMin + (yMax-yMin) * (1-i/6);
@@ -692,10 +755,10 @@ function drawPriceChart(data) {
   }
 
   const series = [
-    { key: 'openPrice', color: '#f85149' },
-    { key: 'avg', color: '#58a6ff' },
-    { key: 'basketTPPrice', color: '#3fb950' },
-    { key: 'midTPPrice', color: '#d29922' },
+    { key: 'openPrice', color: C.red },
+    { key: 'avg', color: C.accent },
+    { key: 'basketTPPrice', color: C.green },
+    { key: 'midTPPrice', color: C.yellow },
   ];
   series.forEach(s => {
     ctx.strokeStyle = s.color;
@@ -716,21 +779,21 @@ function drawPriceChart(data) {
   // 强平线
   if (strikePrice !== null) {
     const y = yScale(strikePrice);
-    ctx.strokeStyle = '#a371f7';
+    ctx.strokeStyle = C.purple;
     ctx.setLineDash([5,3]);
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(left, y); ctx.lineTo(right, y);
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = '#a371f7';
+    ctx.fillStyle = C.purple;
     ctx.textAlign = 'left';
     ctx.fillText('$'+data.balance+' 强平@'+strikePrice.toFixed(0), left+4, y-4);
   }
 
   // X轴
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#8b949e';
+  ctx.fillStyle = C.muted;
   rows.forEach(r => ctx.fillText('L'+r.n, xScale(r.n), bottom+15));
 
   // Tooltip
@@ -765,6 +828,35 @@ function drawPriceChart(data) {
   document.getElementById(id).addEventListener('input', recompute);
 });
 window.addEventListener('resize', () => recompute());
+
+// === 主题切换 ===
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const icon = document.getElementById('themeIcon');
+  const label = document.getElementById('themeLabel');
+  if (theme === 'light') {
+    icon.textContent = '☀️';
+    label.textContent = '明亮';
+  } else {
+    icon.textContent = '🌙';
+    label.textContent = '深色';
+  }
+  try { localStorage.setItem('planner_theme', theme); } catch(e) {}
+  // 主题切换后重绘 canvas (颜色可能取自 CSS 变量)
+  setTimeout(() => recompute(), 20);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+}
+
+// 页面加载时恢复上次主题
+(function initTheme() {
+  let saved = 'dark';
+  try { saved = localStorage.getItem('planner_theme') || 'dark'; } catch(e) {}
+  applyTheme(saved);
+})();
 
 // 初始化
 renderLayerEditor();
