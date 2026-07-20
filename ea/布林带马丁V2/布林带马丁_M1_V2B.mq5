@@ -960,7 +960,7 @@ void ExportState()
    double basketTP = (cycleDirection != 0) ? GetBasketTPForCurrent() : 0;
 
    string json = "{\n";
-   json += StringFormat("\"version\":\"V2B\",\n");
+   json += "\"version\":\"V2B\",\n";
    json += StringFormat("\"timestamp\":\"%s\",\n", TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS));
    json += "\"account\":{";
    json += StringFormat("\"balance\":%.2f,\"equity\":%.2f,\"margin\":%.2f,\"free_margin\":%.2f,\"margin_level\":%.1f", bal, eq, mg, fm, ml);
@@ -1050,7 +1050,7 @@ void ExportTradeClose(string closeReason)
    long duration = (long)(TimeCurrent() - cycleOpenTime);
 
    string line = "{";
-   line += StringFormat("\"version\":\"V2B\",");
+   line += "\"version\":\"V2B\",";
    line += StringFormat("\"cycle_id\":%d,", exportCycleId);
    line += StringFormat("\"engine\":%d,", activeEngine);
    line += StringFormat("\"engine_label\":\"%s\",", activeEngine==1?"A_REVERSAL":activeEngine==2?"B_TREND":"UNKNOWN");
