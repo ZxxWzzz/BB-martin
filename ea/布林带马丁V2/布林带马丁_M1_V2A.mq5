@@ -69,8 +69,7 @@ input group              "=== 交易 ==="
 input int                Inp_MagicNumber  = 2026071701;  // V2A 魔术号
 input int                Inp_MaxSpread    = 80;          // 最大点差(0=不限)
 input int                Inp_Slippage     = 30;          // 滑点
-input int                Inp_StartHour    = 3;           // 交易开始时
-input int                Inp_EndHour      = 22;          // 交易结束时
+input int                Inp_MondaySkipHours = 2;        // 周一开盘前N小时不交易(服务器时间0-N点)
 
 //--- 数据导出
 input group              "=== 导出 ==="
@@ -355,7 +354,9 @@ bool CheckForceClose()
 bool IsTradeTime()
 {
    MqlDateTime dt; TimeTradeServer(dt);
-   return (dt.hour >= Inp_StartHour && dt.hour < Inp_EndHour);
+   // 周一开盘前N小时不做(默认0-2点服务器时间)
+   if(dt.day_of_week == 1 && dt.hour < Inp_MondaySkipHours) return false;
+   return true;
 }
 
 //+------------------------------------------------------------------+
@@ -414,7 +415,7 @@ void CheckEntry()
 
    if(!IsTradeTime())
    {
-      Print("[诊断] ", tag, "× 非交易时段 (", Inp_StartHour, "-", Inp_EndHour, "h)");
+      Print("[诊断] ", tag, "× 周一开盘前", Inp_MondaySkipHours, "小时禁止交易");
       return;
    }
 
