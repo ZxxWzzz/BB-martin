@@ -31,7 +31,7 @@
 
   .layout {
     display: grid;
-    grid-template-columns: 340px 1fr;
+    grid-template-columns: 1fr 340px;
     gap: 16px;
   }
   @media (max-width: 1100px) {
@@ -44,6 +44,16 @@
     border-radius: 6px;
     padding: 14px;
     margin-bottom: 12px;
+  }
+  .panel-sticky {
+    position: sticky;
+    top: 8px;
+    z-index: 100;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    border: 1px solid var(--accent);
+    background: var(--panel);
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
   }
   h2 { font-size: 13px; color: var(--muted); margin-bottom: 10px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
 
@@ -196,10 +206,10 @@
 <div class="subtitle">"反弹"= 从均价到TP触发价的距离 · 实际需真实价格走的距离 = 反弹 + (均价-当前开仓价)</div>
 
 <div class="layout">
-  <!-- 左侧参数栏 -->
+  <!-- 左侧: 基础参数 + 账户参数 + 图表&表格 -->
   <div>
     <div class="panel">
-      <h2>📥 基础参数</h2>
+      <h2 style="margin-top:0">📥 基础参数</h2>
       <div class="row2">
         <div class="field">
           <label>L1起始价</label>
@@ -216,35 +226,15 @@
       <div class="field">
         <label>预设方案</label>
         <div class="preset-bar">
-          <button onclick="loadPreset('current')">当前EA(v5)</button>
-          <button onclick="loadPreset('v6_conservative')">v6保守</button>
-          <button onclick="loadPreset('v6_aggressive')">v6激进</button>
+          <button onclick="loadPreset('V1')">V1 (生产)</button>
+          <button onclick="loadPreset('V2A')">V2A (测试中)</button>
+          <button onclick="loadPreset('V2B')">V2B (测试中)</button>
+          <button onclick="loadPreset('V2_conservative_draft')" style="background:#238636;color:white">V2保守 (设计中⭐)</button>
         </div>
       </div>
-    </div>
-
-    <div class="panel">
-      <h2>⚙️ 分层参数 (可逐层调整)</h2>
-      <div class="layer-row">
-        <div class="head layer-tag">L</div>
-        <div class="head">距上层Δ</div>
-        <div class="head">手数</div>
-        <div class="head">反弹目标</div>
-        <div class="head">中轨TP</div>
-      </div>
-      <div class="layer-editor" id="layerEditor"></div>
-
-      <div class="field" style="margin-top: 10px">
-        <label>最大总手数 (硬限)</label>
-        <input type="number" id="maxTotalLots" value="0.60" step="0.05">
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>💰 账户参数</h2>
-      <div class="row2">
+      <div class="row2" style="margin-top:8px">
         <div class="field">
-          <label>账户余额</label>
+          <label>💰 账户余额</label>
           <input type="number" id="balance" value="2000" step="100">
         </div>
         <div class="field">
@@ -253,10 +243,7 @@
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- 右侧图表&表格 -->
-  <div>
     <!-- KPI -->
     <div class="kpi-grid" id="kpiGrid"></div>
 
@@ -297,6 +284,32 @@
       </div>
     </div>
   </div>
+
+  <!-- 右侧: 只放分层参数 -->
+  <div>
+    <div class="panel panel-sticky">
+      <h2 style="margin-top:0">⚙️ 分层参数 (可逐层调整)</h2>
+      <div class="layer-row">
+        <div class="head layer-tag">L</div>
+        <div class="head">距上层Δ</div>
+        <div class="head">手数</div>
+        <div class="head">反弹目标</div>
+        <div class="head">中轨TP</div>
+      </div>
+      <div class="layer-editor" id="layerEditor"></div>
+
+      <div class="field" style="margin-top: 10px; padding:8px; background: var(--bg); border-radius:4px; border-left:3px solid var(--accent)">
+        <div style="display:flex; justify-content:space-between; align-items:center; font-family:monospace">
+          <span style="color:var(--muted); font-size:11px">当前累计手数:</span>
+          <span id="currentTotalLots" style="color:var(--accent); font-weight:bold; font-size:15px">0.00</span>
+        </div>
+      </div>
+      <div class="field" style="margin-top: 8px">
+        <label>最大总手数 (硬限)</label>
+        <input type="number" id="maxTotalLots" value="0.60" step="0.05">
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="tooltip" id="tooltip"></div>
@@ -305,33 +318,40 @@
 let direction = 1;
 const MAX_LAYERS = 11;
 
-// 预设方案
+// 预设方案 - 对应实际EA版本
 const PRESETS = {
-  current: {
-    name: '当前EA(v5)',
+  V1: {
+    name: 'V1(生产)',
     dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
     lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12, 0.13],
     bounce: [8, 5, 2.88, 2.39, 1.88, 1.52, 1.28, 1.04, 0.82, 0.69, 0.63],
     midTp:  [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
   },
-  v6_conservative: {
-    name: 'v6保守',
+  V2A: {
+    name: 'V2A(单引擎测试中)',
     dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
-    lot:    [0.02, 0.02, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.09, 0.09],
+    lot:    [0.02, 0.02, 0.04, 0.04, 0.05, 0.06, 0.08, 0.10, 0.12, 0.09, 0.08],
     bounce: [6, 4, 3, 2.5, 2, 1.5, 1, 0.5, 0.3, 0.2, 0.1],
     midTp:  [3, 2.5, 2, 2, 1.5, 1, 0.8, 0.5, 0.3, 0.2, 0.15],
   },
-  v6_aggressive: {
-    name: 'v6激进',
+  V2B: {
+    name: 'V2B引擎A(与V2A同)',
     dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
-    lot:    [0.02, 0.02, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.09, 0.09],
-    bounce: [5, 3, 2.5, 2, 1.5, 1, 0.7, 0.4, 0.25, 0.15, 0.1],
-    midTp:  [2.5, 2, 1.5, 1.5, 1, 0.8, 0.5, 0.3, 0.2, 0.15, 0.1],
+    lot:    [0.02, 0.02, 0.04, 0.04, 0.05, 0.06, 0.08, 0.10, 0.12, 0.09, 0.08],
+    bounce: [6, 4, 3, 2.5, 2, 1.5, 1, 0.5, 0.3, 0.2, 0.1],
+    midTp:  [3, 2.5, 2, 2, 1.5, 1, 0.8, 0.5, 0.3, 0.2, 0.15],
+  },
+  V2_conservative_draft: {
+    name: 'V2保守(设计中⭐)',
+    dist:   [0, 5, 6, 7, 8, 9, 10, 11, 12, 15, 17],
+    lot:    [0.02, 0.02, 0.02, 0.03, 0.03, 0.03, 0.04, 0.05, 0.05, 0.05, 0.05],
+    bounce: [6, 4, 3, 2.5, 2, 1.5, 1, 0.7, 0.4, 0.2, 0.1],
+    midTp:  [3, 2.5, 2, 2, 1.5, 1, 0.8, 0.5, 0.3, 0.2, 0.15],
   },
 };
 
 // 当前分层参数(可编辑)
-let LAYERS = JSON.parse(JSON.stringify(PRESETS.current));
+let LAYERS = JSON.parse(JSON.stringify(PRESETS.V1));
 
 function setDirection(d) {
   direction = d;
@@ -351,12 +371,14 @@ function renderLayerEditor() {
   const container = document.getElementById('layerEditor');
   let html = '';
   for (let i = 0; i < MAX_LAYERS; i++) {
+    // 用 text + inputmode="decimal" 避开浏览器 number 输入的干扰
+    // step=any 允许任意小数
     html += `<div class="layer-row">
       <div class="layer-tag">L${i+1}</div>
-      <input type="number" value="${LAYERS.dist[i]}" step="0.5" min="0" ${i===0?'disabled':''} data-key="dist" data-idx="${i}">
-      <input type="number" value="${LAYERS.lot[i]}" step="0.01" min="0.01" data-key="lot" data-idx="${i}">
-      <input type="number" value="${LAYERS.bounce[i]}" step="0.1" min="0.05" data-key="bounce" data-idx="${i}">
-      <input type="number" value="${LAYERS.midTp[i]}" step="0.5" min="0.1" data-key="midTp" data-idx="${i}">
+      <input type="number" step="any" value="${LAYERS.dist[i]}" ${i===0?'disabled':''} data-key="dist" data-idx="${i}">
+      <input type="number" step="any" value="${LAYERS.lot[i]}" data-key="lot" data-idx="${i}">
+      <input type="number" step="any" value="${LAYERS.bounce[i]}" data-key="bounce" data-idx="${i}">
+      <input type="number" step="any" value="${LAYERS.midTp[i]}" data-key="midTp" data-idx="${i}">
     </div>`;
   }
   container.innerHTML = html;
@@ -364,7 +386,12 @@ function renderLayerEditor() {
     inp.addEventListener('input', (e) => {
       const key = e.target.dataset.key;
       const idx = parseInt(e.target.dataset.idx);
-      LAYERS[key][idx] = parseFloat(e.target.value) || 0;
+      const raw = e.target.value;
+      // 允许空/中间状态,但只在能parse成有效数字时更新数据+重算
+      if(raw === '' || raw === '-' || raw === '.') return;
+      const val = parseFloat(raw);
+      if(isNaN(val)) return;
+      LAYERS[key][idx] = val;
       recompute();
     });
   });
@@ -386,12 +413,17 @@ function compute() {
     if (i === 0) openPrice = startPrice;
     else openPrice = direction === 1 ? prevPrice - LAYERS.dist[i] : prevPrice + LAYERS.dist[i];
 
-    cumLot = +(cumLot + lot).toFixed(4);
+    cumLot = Math.round((cumLot + lot) * 10000) / 10000;
     cumValue += openPrice * lot;
     const avg = cumValue / cumLot;
 
     const lag = direction === 1 ? avg - openPrice : openPrice - avg;
-    const floatLoss = lag * cumLot * 100;
+    const floatLoss = lag * cumLot * 100;  // 刚开仓瞬间的浮亏
+
+    // 预期浮亏 = 到下一层触发点时的浮亏(改本层手数会直接影响本层此值)
+    // L11 无下层, 用自己的最后距离作预测
+    const nextDist = (i + 1 < MAX_LAYERS) ? LAYERS.dist[i+1] : (LAYERS.dist[i] || 5);
+    const predictedLoss = (lag + nextDist) * cumLot * 100;
 
     const bounce = LAYERS.bounce[i];  // 反弹目标(均价→TP)
     const basketTPPrice = direction === 1 ? avg + bounce : avg - bounce;
@@ -405,10 +437,10 @@ function compute() {
     const priceMoveToTP = direction === 1 ? basketTPPrice - openPrice : openPrice - basketTPPrice;
 
     rows.push({
-      n: i+1, openPrice, lot, cumLot, avg, lag, floatLoss,
+      n: i+1, openPrice, lot, cumLot, avg, lag, floatLoss, predictedLoss,
       bounce, basketTPPrice, basketProfit, midTPUsd, midTPPrice,
       priceMoveToTP,
-      canSustain: floatLoss <= maxLoss,
+      canSustain: predictedLoss <= maxLoss,   // 用"预期浮亏"判断可扛
     });
     prevPrice = openPrice;
   }
@@ -417,6 +449,14 @@ function compute() {
 
 function recompute() {
   const data = compute();
+  // 更新分层参数面板的"当前累计手数"显示
+  const finalTotal = data.rows[data.rows.length - 1].cumLot;
+  const maxLimit = parseFloat(document.getElementById('maxTotalLots').value) || 0;
+  const totalEl = document.getElementById('currentTotalLots');
+  if(totalEl) {
+    totalEl.textContent = finalTotal.toFixed(2) + (maxLimit > 0 ? ' / ' + maxLimit.toFixed(2) : '');
+    totalEl.style.color = (maxLimit > 0 && finalTotal > maxLimit) ? 'var(--red)' : 'var(--accent)';
+  }
   renderKPI(data);
   renderTable(data);
   drawProfitChart(data);
@@ -454,6 +494,8 @@ function renderTable(data) {
   const { rows } = data;
   let html = `<thead><tr>
     <th>层</th>
+    <th>手数</th>
+    <th>累计手数</th>
     <th>开仓价</th>
     <th>TP触发价</th>
     <th>价格需走</th>
@@ -464,11 +506,13 @@ function renderTable(data) {
     const walkColor = r.priceMoveToTP > 15 ? 'var(--red)' : r.priceMoveToTP > 8 ? 'var(--yellow)' : 'var(--green)';
     html += `<tr>
       <td><b>L${r.n}</b></td>
+      <td style="color:var(--accent)">${r.lot.toFixed(2)}</td>
+      <td>${r.cumLot.toFixed(2)}</td>
       <td class="entry">$${r.openPrice.toFixed(2)}</td>
       <td class="tp">$${r.basketTPPrice.toFixed(2)}</td>
       <td style="color:${walkColor}">+$${r.priceMoveToTP.toFixed(2)}</td>
       <td style="color:var(--green)">+$${r.basketProfit.toFixed(2)}</td>
-      <td style="color:var(--red)">-$${r.floatLoss.toFixed(0)}</td>
+      <td style="color:var(--red)">-$${r.predictedLoss.toFixed(0)}</td>
     </tr>`;
   });
   html += '</tbody>';
@@ -609,12 +653,23 @@ function drawPriceChart(data) {
   rows.forEach(r => prices.push(r.openPrice, r.avg, r.basketTPPrice, r.midTPPrice));
   let pMin = Math.min(...prices), pMax = Math.max(...prices);
 
-  // 强平线的价格 (第一个 not sustain 层的开仓价)
+  // 强平线的价格: 基于"最后可扛层"的均价+累计手数, 浮亏刚好达到maxLoss时的价格
+  // 做多: strikePrice = avg - maxLoss / (cumLot × 100)
+  // 做空: strikePrice = avg + maxLoss / (cumLot × 100)
   let strikePrice = null;
+  let lastSafeLayer = null;
   for (const r of rows) {
-    if (!r.canSustain) { strikePrice = r.openPrice; break; }
+    if (r.canSustain) lastSafeLayer = r;
+    else break;
   }
-  if (strikePrice !== null) { pMin = Math.min(pMin, strikePrice); pMax = Math.max(pMax, strikePrice); }
+  if (lastSafeLayer) {
+    const priceMove = data.maxLoss / (lastSafeLayer.cumLot * 100);
+    strikePrice = direction === 1
+      ? lastSafeLayer.avg - priceMove
+      : lastSafeLayer.avg + priceMove;
+    pMin = Math.min(pMin, strikePrice);
+    pMax = Math.max(pMax, strikePrice);
+  }
 
   const pad = (pMax - pMin) * 0.1;
   const yMin = pMin - pad, yMax = pMax + pad;
