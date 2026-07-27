@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>分层TP规划器</title>
+<title>分层TP规划器 (副本·层数可调)</title>
 <style>
   /* 深色主题(默认) */
   :root, :root[data-theme="dark"] {
@@ -127,7 +127,7 @@
   .layer-editor { max-height: 400px; overflow-y: auto; }
   .layer-row {
     display: grid;
-    grid-template-columns: 32px 70px 70px 80px;
+    grid-template-columns: 32px 60px 60px 70px 70px;
     gap: 4px;
     padding: 4px 0;
     align-items: center;
@@ -245,8 +245,16 @@
   <span id="themeLabel">深色</span>
 </button>
 
-<h1>分层TP规划器</h1>
+<h1>分层TP规划器 <span style="color:var(--yellow); font-size:14px">(副本·层数可调)</span></h1>
 <div class="subtitle">"反弹"= 从均价到TP触发价的距离 · 实际需真实价格走的距离 = 反弹 + (均价-当前开仓价)</div>
+
+<div style="background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:10px 14px; margin-bottom:12px; display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+  <span style="color:var(--muted); font-size:12px">层数控制:</span>
+  <button onclick="changeLayers(-1)" style="background:var(--input-bg); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:15px; font-weight:bold">−</button>
+  <input type="number" id="layerCountInput" value="11" min="3" max="20" style="width:60px; text-align:center; background:var(--input-bg); border:1px solid var(--border); color:var(--text); padding:4px; border-radius:4px; font-family:monospace; font-size:14px; font-weight:bold">
+  <button onclick="changeLayers(1)" style="background:var(--input-bg); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:15px; font-weight:bold">+</button>
+  <span style="color:var(--muted); font-size:11px">(范围 3-20 层)</span>
+</div>
 
 <div class="layout">
   <!-- 左侧: 基础参数 + 账户参数 + 图表&表格 -->
@@ -270,18 +278,9 @@
         <label>预设方案</label>
         <div class="preset-bar">
           <button onclick="loadPreset('V1')">V1 (生产)</button>
-          <button onclick="loadPreset('V2')">V2 (测试中)</button>
-          <button onclick="loadPreset('V3')" style="background:#238636;color:white">V3 (11层扛100点⭐)</button>
-          <button onclick="loadPreset('V3L')" style="background:#8250df;color:white">V3L (9层深救援⭐)</button>
-        </div>
-      </div>
-      <div class="field">
-        <label>层数控制 (3-20)</label>
-        <div style="display:flex; align-items:center; gap:8px">
-          <button onclick="changeLayers(-1)" style="background:var(--input-bg); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-weight:bold">−</button>
-          <input type="number" id="layerCountInput" value="11" min="3" max="20" style="width:60px; text-align:center; background:var(--input-bg); border:1px solid var(--border); color:var(--text); padding:4px; border-radius:4px; font-family:monospace; font-weight:bold">
-          <button onclick="changeLayers(1)" style="background:var(--input-bg); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-weight:bold">+</button>
-          <span style="color:var(--muted); font-size:11px">层</span>
+          <button onclick="loadPreset('V2A')">V2A (测试中)</button>
+          <button onclick="loadPreset('V2B')">V2B (测试中)</button>
+          <button onclick="loadPreset('V2_conservative_draft')" style="background:#238636;color:white">V2保守 (设计中⭐)</button>
         </div>
       </div>
       <div class="row2" style="margin-top:8px">
@@ -316,12 +315,13 @@
     <!-- 图3: 价格视图 -->
     <div class="panel">
       <div class="chart-title">💹 价格视图</div>
-      <div class="chart-subtitle">各层开仓价 / 均价 / 篮子TP价</div>
+      <div class="chart-subtitle">各层开仓价 / 均价 / 篮子TP价 / 中轨TP价</div>
       <canvas id="priceChart" class="chart-canvas"></canvas>
       <div class="legend">
         <div class="legend-item"><span class="legend-dot" style="background:#f85149"></span> 开仓价</div>
         <div class="legend-item"><span class="legend-dot" style="background:#58a6ff"></span> 均价</div>
         <div class="legend-item"><span class="legend-dot" style="background:#3fb950"></span> 篮子TP价</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#d29922"></span> 中轨TP价</div>
         <div class="legend-item"><span class="legend-dot" style="background:#a371f7"></span> 强平线</div>
       </div>
     </div>
@@ -345,6 +345,7 @@
         <div class="head">距上层Δ</div>
         <div class="head">手数</div>
         <div class="head">反弹目标</div>
+        <div class="head">中轨TP</div>
       </div>
       <div class="layer-editor" id="layerEditor"></div>
 
@@ -377,24 +378,28 @@ const PRESETS = {
     dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
     lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12, 0.13],
     bounce: [8, 5, 2.88, 2.39, 1.88, 1.52, 1.28, 1.04, 0.82, 0.69, 0.63],
+    midTp:  [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
   },
-  V2: {
-    name: 'V2(测试中,V2A/V2B引擎A同参数)',
+  V2A: {
+    name: 'V2A(单引擎测试中)',
     dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
     lot:    [0.02, 0.02, 0.04, 0.04, 0.05, 0.06, 0.08, 0.10, 0.12, 0.09, 0.08],
     bounce: [6, 4, 3, 2.5, 2, 1.5, 1, 0.5, 0.3, 0.2, 0.1],
+    midTp:  [3, 2.5, 2, 2, 1.5, 1, 0.8, 0.5, 0.3, 0.2, 0.15],
   },
-  V3: {
-    name: 'V3(11层·$2000扛100点⭐)',
-    dist:   [0, 5, 6, 7, 8, 9, 10, 11, 12, 14, 18],
-    lot:    [0.01, 0.01, 0.02, 0.02, 0.03, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08],
-    bounce: [8, 5, 3, 2.5, 2, 1.5, 1, 0.6, 0.4, 0.2, 0.1],
+  V2B: {
+    name: 'V2B引擎A(与V2A同)',
+    dist:   [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
+    lot:    [0.02, 0.02, 0.04, 0.04, 0.05, 0.06, 0.08, 0.10, 0.12, 0.09, 0.08],
+    bounce: [6, 4, 3, 2.5, 2, 1.5, 1, 0.5, 0.3, 0.2, 0.1],
+    midTp:  [3, 2.5, 2, 2, 1.5, 1, 0.8, 0.5, 0.3, 0.2, 0.15],
   },
-  V3L: {
-    name: 'V3L(9层·深层救援更强⭐)',
-    dist:   [0, 7, 8, 10, 11, 12, 14, 16, 22],
-    lot:    [0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10],
-    bounce: [8, 4, 3, 2, 1.5, 1, 0.7, 0.3, 0.1],
+  V2_conservative_draft: {
+    name: 'V2保守(设计中⭐)',
+    dist:   [0, 5, 6, 7, 8, 9, 10, 11, 12, 15, 17],
+    lot:    [0.02, 0.02, 0.02, 0.03, 0.03, 0.03, 0.04, 0.05, 0.05, 0.05, 0.05],
+    bounce: [6, 4, 3, 2.5, 2, 1.5, 1, 0.7, 0.4, 0.2, 0.1],
+    midTp:  [3, 2.5, 2, 2, 1.5, 1, 0.8, 0.5, 0.3, 0.2, 0.15],
   },
 };
 
@@ -410,10 +415,7 @@ function setDirection(d) {
 
 function loadPreset(name) {
   LAYERS = JSON.parse(JSON.stringify(PRESETS[name]));
-  // 预设自带层数(以dist数组长度为准), 同步到 currentLayers
-  const presetLayers = LAYERS.dist.length;
-  currentLayers = Math.max(MIN_LAYER_LIMIT, Math.min(MAX_LAYER_LIMIT, presetLayers));
-  document.getElementById('layerCountInput').value = currentLayers;
+  // 预设是11层数据, 若当前层数不同, 补齐/截断
   alignLayersToCount(currentLayers);
   renderLayerEditor();
   recompute();
@@ -421,15 +423,19 @@ function loadPreset(name) {
 
 // 把 LAYERS 各数组补齐或截断到指定长度
 function alignLayersToCount(n) {
-  ['dist', 'lot', 'bounce'].forEach(key => {
+  ['dist', 'lot', 'bounce', 'midTp'].forEach(key => {
     const arr = LAYERS[key];
     while (arr.length < n) {
+      // 补齐: 复用最后一个值(温和延续序列)
       arr.push(arr[arr.length - 1] || 0.01);
     }
-    if (arr.length > n) arr.length = n;
+    if (arr.length > n) {
+      arr.length = n;  // 截断
+    }
   });
 }
 
+// 层数增减
 function changeLayers(delta) {
   const input = document.getElementById('layerCountInput');
   const cur = parseInt(input.value) || 11;
@@ -458,6 +464,7 @@ function renderLayerEditor() {
       <input type="number" step="any" value="${LAYERS.dist[i]}" ${i===0?'disabled':''} data-key="dist" data-idx="${i}">
       <input type="number" step="any" value="${LAYERS.lot[i]}" data-key="lot" data-idx="${i}">
       <input type="number" step="any" value="${LAYERS.bounce[i]}" data-key="bounce" data-idx="${i}">
+      <input type="number" step="any" value="${LAYERS.midTp[i]}" data-key="midTp" data-idx="${i}">
     </div>`;
   }
   container.innerHTML = html;
@@ -508,14 +515,18 @@ function compute() {
     const basketTPPrice = direction === 1 ? avg + bounce : avg - bounce;
     const basketProfit = bounce * cumLot * 100;
 
+    const midTPUsd = LAYERS.midTp[i];
+    const midBounce = midTPUsd / (cumLot * 100);
+    const midTPPrice = direction === 1 ? avg + midBounce : avg - midBounce;
+
     // 从当前开仓价到TP触发价的距离
     const priceMoveToTP = direction === 1 ? basketTPPrice - openPrice : openPrice - basketTPPrice;
 
     rows.push({
       n: i+1, openPrice, lot, cumLot, avg, lag, floatLoss, predictedLoss,
-      bounce, basketTPPrice, basketProfit,
+      bounce, basketTPPrice, basketProfit, midTPUsd, midTPPrice,
       priceMoveToTP,
-      canSustain: predictedLoss <= maxLoss,
+      canSustain: predictedLoss <= maxLoss,   // 用"预期浮亏"判断可扛
     });
     prevPrice = openPrice;
   }
@@ -744,7 +755,7 @@ function drawPriceChart(data) {
   ctx.clearRect(0, 0, W, H);
 
   const prices = [];
-  rows.forEach(r => prices.push(r.openPrice, r.avg, r.basketTPPrice));
+  rows.forEach(r => prices.push(r.openPrice, r.avg, r.basketTPPrice, r.midTPPrice));
   let pMin = Math.min(...prices), pMax = Math.max(...prices);
 
   // 强平线的价格: 基于"最后可扛层"的均价+累计手数, 浮亏刚好达到maxLoss时的价格
@@ -790,6 +801,7 @@ function drawPriceChart(data) {
     { key: 'openPrice', color: C.red },
     { key: 'avg', color: C.accent },
     { key: 'basketTPPrice', color: C.green },
+    { key: 'midTPPrice', color: C.yellow },
   ];
   series.forEach(s => {
     ctx.strokeStyle = s.color;
@@ -842,6 +854,7 @@ function drawPriceChart(data) {
         <div class="tt-row"><span class="tt-label">开仓价:</span> $${nearest.openPrice.toFixed(2)}</div>
         <div class="tt-row"><span class="tt-label">均价:</span> $${nearest.avg.toFixed(2)}</div>
         <div class="tt-row"><span class="tt-label">篮子TP价:</span> $${nearest.basketTPPrice.toFixed(2)}</div>
+        <div class="tt-row"><span class="tt-label">中轨TP价:</span> $${nearest.midTPPrice.toFixed(2)}</div>
         <div class="tt-row"><span class="tt-label">篮子盈利:</span> +$${nearest.basketProfit.toFixed(2)}</div>
         <div class="tt-row"><span class="tt-label">真实需走:</span> $${nearest.priceMoveToTP.toFixed(2)}</div>
         <div class="tt-row"><span class="tt-label">此层浮亏:</span> -$${nearest.floatLoss.toFixed(0)}</div>`;
