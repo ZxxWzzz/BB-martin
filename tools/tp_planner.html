@@ -276,6 +276,7 @@
           <button onclick="loadPreset('V3L')" style="background:#cf222e;color:white">V3L (9层重浅层⭐)</button>
           <button onclick="loadPreset('V3GPT')" style="background:#8250df;color:white">V3GPT (11层等差⭐)</button>
           <button onclick="loadPreset('V3GPTL')" style="background:#bf8700;color:white">V3GPTL (9层等差⭐)</button>
+          <button onclick="loadPreset('V4')" style="background:#0969da;color:white">V4 (分层风控⭐)</button>
         </div>
       </div>
       <div class="field">
@@ -410,6 +411,12 @@ const PRESETS = {
     dist:   [0, 4, 6, 8, 10, 12, 14, 15, 15],
     lot:    [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10],
     bounce: [8, 5, 3, 2, 1.5, 1, 0.6, 0.3, 0.1],
+  },
+  V4: {
+    name: 'V4(9层·分层风控·L8/L9负bounce主动止损⭐)',
+    dist:   [0, 4, 5, 7, 9, 11, 13, 16, 20],
+    lot:    [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10],
+    bounce: [8, 5, 3, 2, 2, 1, 1, -9, -14],
   },
 };
 
