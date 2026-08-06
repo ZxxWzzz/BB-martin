@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>4EA 数据看板</title>
+<style>
+  :root, :root[data-theme="dark"] {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --yellow: #d29922; --red: #f85149; --purple: #a371f7;
+    --shadow: rgba(0,0,0,0.5);
+  }
+  :root[data-theme="light"] {
+    --bg: #ffffff; --panel: #f6f8fa; --border: #d0d7de;
+    --text: #1f2328; --muted: #656d76; --accent: #0969da;
+    --green: #1a7f37; --yellow: #9a6700; --red: #cf222e; --purple: #8250df;
+    --shadow: rgba(31,35,40,0.15);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 13px; padding: 16px; max-width: 1600px; margin: 0 auto;
+  }
+  h1 { font-size: 20px; color: var(--accent); margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+
+  .theme-toggle {
+    position: fixed; top: 12px; right: 12px; z-index: 200;
+    background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 12px; border-radius: 6px;
+    cursor: pointer; font-size: 13px;
+  }
+
+  /* 路径提示条 */
+  .path-hint {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 14px; margin-bottom: 12px;
+  }
+
+  /* 上传区 */
+  .upload-zone {
+    background: var(--panel); border: 2px dashed var(--border);
+    border-radius: 8px; padding: 24px; text-align: center;
+    margin-bottom: 16px; cursor: pointer; transition: all 0.2s;
+  }
+  .upload-zone.drag-over { border-color: var(--accent); background: rgba(88,166,255,0.05); }
+  .upload-zone h3 { color: var(--accent); margin-bottom: 8px; }
+  .upload-zone p { color: var(--muted); font-size: 12px; margin: 4px 0; }
+  .upload-zone input { display: none; }
+  .file-status {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+    margin-top: 12px; font-size: 11px;
+  }
+  .file-badge {
+    padding: 6px 10px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; text-align: center;
+  }
+  .file-badge.loaded { border-color: var(--green); color: var(--green); }
+  .file-badge.empty { color: var(--muted); }
+
+  /* 面板 */
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 14px; margin-bottom: 12px;
+  }
+  h2 { font-size: 14px; color: var(--muted); margin-bottom: 10px;
+       border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+
+  /* KPI 卡片 */
+  .kpi-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    margin-bottom: 12px;
+  }
+  .kpi-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-left: 4px solid var(--accent); border-radius: 6px; padding: 12px;
+  }
+  .kpi-card.v2a { border-left-color: var(--red); }
+  .kpi-card.v2b { border-left-color: var(--yellow); }
+  .kpi-card.v3gpt { border-left-color: var(--purple); }
+  .kpi-card.v3gptl { border-left-color: var(--green); }
+  .kpi-card h3 { font-size: 14px; color: var(--text); margin-bottom: 8px; }
+  .kpi-row { display: flex; justify-content: space-between; margin: 3px 0; font-family: monospace; font-size: 11px; }
+  .kpi-row .k { color: var(--muted); }
+  .kpi-row .v { color: var(--text); font-weight: bold; }
+  .kpi-row .v.positive { color: var(--green); }
+  .kpi-row .v.negative { color: var(--red); }
+
+  /* Canvas */
+  canvas.chart {
+    display: block; width: 100%; height: 340px; cursor: crosshair;
+  }
+  canvas.chart-tall { height: 400px; }
+
+  /* 图例 */
+  .legend { display: flex; gap: 14px; flex-wrap: wrap;
+    font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 2px; }
+  .legend-line { width: 18px; height: 2px; }
+
+  /* 交易表 */
+  .table-controls {
+    display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;
+    align-items: center; font-size: 12px;
+  }
+  .table-controls label { color: var(--muted); }
+  .table-controls select, .table-controls input {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 8px; border-radius: 4px;
+    font-family: monospace; font-size: 12px;
+  }
+  .table-scroll { max-height: 500px; overflow-y: auto; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-family: monospace; font-size: 11px; }
+  th, td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { background: var(--bg); color: var(--muted); position: sticky; top: 0; text-transform: uppercase; font-size: 10px; font-weight: normal; }
+  th:first-child, td:first-child { text-align: left; }
+  tr:hover td { background: rgba(88,166,255,0.05); }
+  td.pos { color: var(--green); font-weight: bold; }
+  td.neg { color: var(--red); font-weight: bold; }
+  td.v2a { color: var(--red); }
+  td.v2b { color: var(--yellow); }
+  td.v3gpt { color: var(--purple); }
+  td.v3gptl { color: var(--green); }
+  td.eng-a { color: var(--accent); }
+  td.eng-b { color: var(--purple); }
+  td.layer-shallow { color: var(--green); }
+  td.layer-mid { color: var(--yellow); }
+  td.layer-deep { color: var(--red); font-weight: bold; }
+
+  .layer-grid {
+    display: grid; grid-template-columns: repeat(11, 1fr); gap: 4px;
+    font-family: monospace; font-size: 11px;
+  }
+  .layer-cell {
+    background: var(--bg); padding: 6px 4px; border-radius: 3px;
+    text-align: center; border: 1px solid var(--border);
+  }
+  .layer-cell .l { color: var(--muted); font-size: 10px; }
+  .layer-cell .c { font-size: 14px; font-weight: bold; margin: 2px 0; }
+  .layer-cell .p { font-size: 10px; }
+  .layer-cell .p.pos { color: var(--green); }
+  .layer-cell .p.neg { color: var(--red); }
+
+  .empty-hint { text-align: center; padding: 40px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" onclick="toggleTheme()">
+  <span id="themeIcon">🌙</span>
+  <span id="themeLabel">深色</span>
+</button>
+
+<h1>4EA 数据看板</h1>
+<div class="subtitle">拖入或点击上传 4 个 jsonl 交易文件, 支持组合分析</div>
+
+<!-- 数据源路径提示 -->
+<div class="path-hint">
+  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+    <span style="color:var(--muted); font-size:12px">📁 数据文件位置(MT5 Common\Files):</span>
+    <code id="dataPath" style="background:var(--bg); padding:6px 10px; border-radius:4px; font-size:12px; border:1px solid var(--border); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">%APPDATA%\MetaQuotes\Terminal\Common\Files\</code>
+    <button onclick="copyPath()" style="background:var(--accent); color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-size:12px; white-space:nowrap">📋 复制</button>
+    <button onclick="openFolder()" style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:12px; white-space:nowrap">📂 打开教程</button>
+  </div>
+  <div style="color:var(--muted); font-size:11px; margin-top:6px; line-height:1.6">
+    在 Windows 资源管理器地址栏粘贴上方路径 → 找到 4 个 <code style="color:var(--accent)">bb_martin_*_trades.jsonl</code> 文件 → 拖入下方上传区 (或点击选择)
+    <br>
+    <span style="color:var(--muted)">💡 MT5 内快捷方式: 顶部菜单 <b>文件 → 打开数据文件夹</b> → 若 MT5 不是 portable 模式,再进入 <b>Common\Files\</b></span>
+  </div>
+</div>
+
+<!-- 上传区 -->
+<div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+  <h3>📂 上传 EA 交易文件</h3>
+  <p>把 <b>bb_martin_v2a_trades.jsonl</b> / <b>_v2b_</b> / <b>_v3gpt_</b> / <b>_v3gptl_</b> 文件</p>
+  <p><b style="color:var(--accent)">拖拽到此处</b> 或 <b style="color:var(--accent)">点击选择</b> (可一次选4个,或分批上传补齐)</p>
+  <input type="file" id="fileInput" multiple accept=".jsonl,.json,.txt">
+  <div class="file-status" id="fileStatus">
+    <div class="file-badge empty" data-key="v2a">V2A: 未加载</div>
+    <div class="file-badge empty" data-key="v2b">V2B: 未加载</div>
+    <div class="file-badge empty" data-key="v3gpt">V3GPT: 未加载</div>
+    <div class="file-badge empty" data-key="v3gptl">V3GPTL: 未加载</div>
+  </div>
+</div>
+
+<!-- 路径帮助弹窗 -->
+<div id="pathHelp" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center" onclick="closePathHelp(event)">
+  <div style="background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:24px; max-width:700px; width:90%; max-height:80vh; overflow-y:auto" onclick="event.stopPropagation()">
+    <h3 style="color:var(--accent); margin-bottom:14px">📂 如何找到 EA 交易文件</h3>
+    <div style="line-height:1.8; color:var(--text); font-size:13px">
+      <p><b>方法1: 使用 MT5 内置快捷方式 (推荐)</b></p>
+      <ol style="margin:8px 0 16px 24px; color:var(--muted)">
+        <li>打开 MT5</li>
+        <li>顶部菜单 <b style="color:var(--accent)">文件 → 打开数据文件夹</b></li>
+        <li>portable 模式: 进入 <b>MQL5\Files\</b></li>
+        <li>普通模式: 需在文件夹地址栏点击 <b>Terminal</b> → 进入 <b>Common\Files\</b></li>
+      </ol>
+      <p><b>方法2: 直接粘贴路径 (Windows)</b></p>
+      <ol style="margin:8px 0 16px 24px; color:var(--muted)">
+        <li>打开资源管理器(Win+E)</li>
+        <li>在地址栏粘贴: <code style="background:var(--bg); padding:2px 6px; border-radius:3px">%APPDATA%\MetaQuotes\Terminal\Common\Files</code></li>
+        <li>回车即可到达</li>
+      </ol>
+      <p><b>方法3: 在本项目 portable 副本中</b></p>
+      <ol style="margin:8px 0 16px 24px; color:var(--muted)">
+        <li>V2A: <code style="background:var(--bg); padding:2px 6px; border-radius:3px">D:\MT5s\MetaTraderV2A\MQL5\Files\</code></li>
+        <li>V2B: <code style="background:var(--bg); padding:2px 6px; border-radius:3px">D:\MT5s\MetaTraderV2B\MQL5\Files\</code></li>
+        <li>V3GPT: <code style="background:var(--bg); padding:2px 6px; border-radius:3px">D:\MT5s\MetaTraderV3GPT\MQL5\Files\</code></li>
+        <li>V3GPTL: <code style="background:var(--bg); padding:2px 6px; border-radius:3px">D:\MT5s\MetaTraderV3GPTL\MQL5\Files\</code></li>
+        <li style="color:var(--yellow)">⚠️ 但由于 EA 用了 FILE_COMMON 标志,实际写入的是 <b>Common\Files</b> 共享目录</li>
+      </ol>
+      <p><b>文件名对照</b></p>
+      <div style="background:var(--bg); border-radius:4px; padding:10px; margin:8px 0">
+        <div>V2A → <code>bb_martin_v2a_trades.jsonl</code></div>
+        <div>V2B → <code>bb_martin_v2b_trades.jsonl</code></div>
+        <div>V3GPT → <code>bb_martin_v3gpt_trades.jsonl</code></div>
+        <div>V3GPTL → <code>bb_martin_v3gptl_trades.jsonl</code></div>
+      </div>
+    </div>
+    <div style="text-align:right; margin-top:16px">
+      <button onclick="closePathHelp()" style="background:var(--accent); color:white; border:none; padding:8px 20px; border-radius:4px; cursor:pointer">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 主内容,加载数据后显示 -->
+<div id="dashboard" style="display:none">
+  <!-- 全局过滤开关 -->
+  <div class="panel" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; padding:10px 14px">
+    <span style="color:var(--muted); font-size:12px; font-weight:bold">🔧 全局过滤:</span>
+
+    <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px">
+      <input type="checkbox" id="hideLosses" onchange="onFilterChange()">
+      <span>隐藏亏损单 (排除爆仓/负盈利)</span>
+    </label>
+
+    <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px">
+      <span style="color:var(--muted)">或排除 &lt;</span>
+      <input type="number" id="hideBelow" value="0" step="10" style="width:70px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:3px 6px; border-radius:3px; font-family:monospace" onchange="onFilterChange()">
+      <span style="color:var(--muted)">美元的单</span>
+    </label>
+
+    <span id="filterInfo" style="color:var(--yellow); font-size:11px; font-family:monospace"></span>
+  </div>
+
+  <!-- KPI 卡片 -->
+  <div class="kpi-grid" id="kpiGrid"></div>
+
+  <!-- 图1: 累计收益曲线 -->
+  <div class="panel">
+    <h2>📈 累计收益曲线 (按平仓时间)</h2>
+    <canvas id="equityChart" class="chart chart-tall"></canvas>
+    <div class="legend" id="equityLegend"></div>
+  </div>
+
+  <!-- 图2: 每日盈利柱状图 -->
+  <div class="panel">
+    <h2>📊 每日盈利对比</h2>
+    <canvas id="dailyChart" class="chart"></canvas>
+  </div>
+
+  <!-- 层数分布 -->
+  <div class="panel">
+    <h2>🏛️ 层数触发分布 & 盈利</h2>
+    <div id="layerDist"></div>
+  </div>
+
+  <!-- 盈利区间分布 -->
+  <div class="panel">
+    <h2>💰 盈利区间分布</h2>
+    <canvas id="rangeChart" class="chart"></canvas>
+    <div class="legend" id="rangeLegend"></div>
+  </div>
+
+  <!-- 交易明细表 -->
+  <div class="panel">
+    <h2>📋 交易明细</h2>
+    <div class="table-controls">
+      <label>EA筛选:</label>
+      <select id="filterEA" onchange="renderTable()">
+        <option value="all">全部</option>
+        <option value="V2A">V2A</option>
+        <option value="V2B">V2B</option>
+        <option value="V3GPT">V3GPT</option>
+        <option value="V3GPTL">V3GPTL</option>
+      </select>
+      <label>层数:</label>
+      <select id="filterLayer" onchange="renderTable()">
+        <option value="all">全部</option>
+        <option value="1">L1</option>
+        <option value="2">L2</option>
+        <option value="3">L3</option>
+        <option value="4">L4</option>
+        <option value="5">L5</option>
+        <option value="6">L6</option>
+        <option value="7">L7</option>
+        <option value="8">L8</option>
+        <option value="9">L9</option>
+        <option value="10">L10</option>
+        <option value="11">L11</option>
+      </select>
+      <label>方向:</label>
+      <select id="filterDir" onchange="renderTable()">
+        <option value="all">全部</option>
+        <option value="BUY">做多</option>
+        <option value="SELL">做空</option>
+      </select>
+      <label>结果:</label>
+      <select id="filterResult" onchange="renderTable()">
+        <option value="all">全部</option>
+        <option value="win">盈利</option>
+        <option value="loss">亏损</option>
+      </select>
+      <label>排序:</label>
+      <select id="sortBy" onchange="renderTable()">
+        <option value="time_desc">时间↓</option>
+        <option value="time_asc">时间↑</option>
+        <option value="profit_desc">盈亏↓</option>
+        <option value="profit_asc">盈亏↑</option>
+        <option value="layer_desc">层数↓</option>
+        <option value="duration_desc">时长↓</option>
+      </select>
+      <span id="tableCount" style="color:var(--muted)"></span>
+    </div>
+    <div class="table-scroll">
+      <table id="tradeTable"></table>
+    </div>
+  </div>
+</div>
+
+<div id="emptyHint" class="empty-hint">
+  <p>👆 上传交易文件后此处显示分析结果</p>
+</div>
+
+<script>
+// ========== 数据存储 ==========
+const DATA = { V2A: [], V2B: [], V3GPT: [], V3GPTL: [] };
+const EA_COLORS = { V2A: '#f85149', V2B: '#d29922', V3GPT: '#a371f7', V3GPTL: '#3fb950' };
+
+// 过滤后的数据(应用了全局过滤开关)
+function getFiltered(key) {
+  const raw = DATA[key] || [];
+  const hideLosses = document.getElementById('hideLosses')?.checked;
+  const hideBelow = parseFloat(document.getElementById('hideBelow')?.value) || 0;
+  if (!hideLosses && hideBelow <= -99999) return raw;
+  return raw.filter(t => {
+    if (hideLosses && t.profit < 0) return false;
+    if (hideBelow < 0 && t.profit < hideBelow) return false;
+    return true;
+  });
+}
+
+function onFilterChange() {
+  // 计算过滤统计
+  let totalHidden = 0, totalHiddenLoss = 0;
+  for (const k of ['V2A','V2B','V3GPT','V3GPTL']) {
+    const raw = DATA[k];
+    const filtered = getFiltered(k);
+    const hidden = raw.length - filtered.length;
+    totalHidden += hidden;
+    totalHiddenLoss += raw.filter(t => !filtered.includes(t)).reduce((s,t) => s+t.profit, 0);
+  }
+  const info = document.getElementById('filterInfo');
+  if (totalHidden > 0) {
+    info.textContent = `⚠️ 已过滤 ${totalHidden} 笔 (影响盈亏: ${totalHiddenLoss>=0?'+':''}$${totalHiddenLoss.toFixed(0)})`;
+  } else {
+    info.textContent = '';
+  }
+  redraw();
+}
+
+// ========== 路径提示 ==========
+const DATA_PATH = 'C:\\Users\\张兴旺\\AppData\\Roaming\\MetaQuotes\\Terminal\\Common\\Files\\';
+// 显示时用环境变量占位符,让所有用户看到都能理解
+document.getElementById('dataPath').textContent = '%APPDATA%\\MetaQuotes\\Terminal\\Common\\Files\\';
+
+function copyPath() {
+  const text = '%APPDATA%\\MetaQuotes\\Terminal\\Common\\Files\\';
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => {
+      const el = document.getElementById('dataPath');
+      const orig = el.textContent;
+      el.textContent = '✓ 已复制到剪贴板! 粘贴到资源管理器地址栏';
+      el.style.color = 'var(--green)';
+      setTimeout(() => {
+        el.textContent = orig;
+        el.style.color = '';
+      }, 2000);
+    }).catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; document.body.appendChild(ta);
+  ta.select(); document.execCommand('copy');
+  document.body.removeChild(ta);
+  alert('路径已复制:\n' + text);
+}
+function openFolder() {
+  document.getElementById('pathHelp').style.display = 'flex';
+}
+function closePathHelp(e) {
+  if (!e || e.target.id === 'pathHelp') {
+    document.getElementById('pathHelp').style.display = 'none';
+  }
+}
+
+// ========== 主题 ==========
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  document.getElementById('themeIcon').textContent = t === 'light' ? '☀️' : '🌙';
+  document.getElementById('themeLabel').textContent = t === 'light' ? '明亮' : '深色';
+  try { localStorage.setItem('dash_theme', t); } catch(e) {}
+  if (hasAnyData()) redraw();
+}
+function toggleTheme() {
+  applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+}
+(function() {
+  let saved = 'dark';
+  try { saved = localStorage.getItem('dash_theme') || 'dark'; } catch(e) {}
+  applyTheme(saved);
+})();
+
+// ========== 文件上传 ==========
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  handleFiles(e.dataTransfer.files);
+});
+
+async function handleFiles(files) {
+  for (const f of files) {
+    const key = detectKey(f.name);
+    if (!key) continue;
+    const text = await f.text();
+    const trades = parseTrades(text);
+    DATA[key] = trades;
+    updateFileBadge(key, trades.length);
+  }
+  if (hasAnyData()) {
+    document.getElementById('dashboard').style.display = 'block';
+    document.getElementById('emptyHint').style.display = 'none';
+    redraw();
+  }
+}
+
+function detectKey(filename) {
+  const lower = filename.toLowerCase();
+  if (lower.includes('v3gptl')) return 'V3GPTL';
+  if (lower.includes('v3gpt'))  return 'V3GPT';
+  if (lower.includes('v2b'))    return 'V2B';
+  if (lower.includes('v2a'))    return 'V2A';
+  return null;
+}
+
+function parseTrades(text) {
+  const out = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const t = JSON.parse(line);
+      if (t.open_time && !t.open_time.startsWith('1970')) out.push(t);
+    } catch(e) {}
+  }
+  return out;
+}
+
+function updateFileBadge(key, count) {
+  const el = document.querySelector('.file-badge[data-key="' + key.toLowerCase() + '"]');
+  if (el) {
+    el.textContent = key + ': ' + count + ' 笔';
+    el.classList.remove('empty');
+    el.classList.add('loaded');
+  }
+}
+
+function hasAnyData() {
+  return Object.values(DATA).some(a => a.length > 0);
+}
+
+// ========== 统计 ==========
+function calcStats(trades) {
+  if (!trades.length) return null;
+  const total = trades.reduce((s,t) => s+t.profit, 0);
+  const wins = trades.filter(t => t.profit > 0);
+  const losses = trades.filter(t => t.profit < 0);
+  const days = new Set(trades.map(t => t.open_time.slice(0,10))).size;
+  const maxP = Math.max(...trades.map(t=>t.profit));
+  const minP = Math.min(...trades.map(t=>t.profit));
+  return {
+    total, wins: wins.length, losses: losses.length, days,
+    count: trades.length, avg: total/trades.length,
+    daily: total/days, dailyN: trades.length/days,
+    winRate: wins.length/trades.length*100,
+    maxP, minP,
+    startDate: trades.map(t=>t.open_time).sort()[0].slice(0,10),
+    endDate: trades.map(t=>t.open_time).sort().slice(-1)[0].slice(0,10),
+  };
+}
+
+function renderKPI() {
+  let html = '';
+  for (const key of ['V2A','V2B','V3GPT','V3GPTL']) {
+    const s = calcStats(getFiltered(key));
+    const cls = key.toLowerCase();
+    if (!s) {
+      html += `<div class="kpi-card ${cls}">
+        <h3>${key}</h3>
+        <div class="kpi-row"><span class="k">状态</span><span class="v">未加载</span></div>
+      </div>`;
+      continue;
+    }
+    const totalCls = s.total >= 0 ? 'positive' : 'negative';
+    const dailyCls = s.daily >= 0 ? 'positive' : 'negative';
+    html += `<div class="kpi-card ${cls}">
+      <h3>${key} <span style="color:var(--muted); font-weight:normal; font-size:11px">(${s.days}天)</span></h3>
+      <div class="kpi-row"><span class="k">总盈利</span><span class="v ${totalCls}">${s.total>=0?'+':''}$${s.total.toFixed(2)}</span></div>
+      <div class="kpi-row"><span class="k">日均</span><span class="v ${dailyCls}">${s.daily>=0?'+':''}$${s.daily.toFixed(1)}</span></div>
+      <div class="kpi-row"><span class="k">笔数</span><span class="v">${s.count} (${s.dailyN.toFixed(1)}/日)</span></div>
+      <div class="kpi-row"><span class="k">胜率</span><span class="v">${s.winRate.toFixed(1)}%</span></div>
+      <div class="kpi-row"><span class="k">平均单笔</span><span class="v">$${s.avg.toFixed(2)}</span></div>
+      <div class="kpi-row"><span class="k">最大</span><span class="v positive">+$${s.maxP.toFixed(0)}</span></div>
+      <div class="kpi-row"><span class="k">最小</span><span class="v ${s.minP<0?'negative':''}">${s.minP<0?'-$':'+$'}${Math.abs(s.minP).toFixed(0)}</span></div>
+      <div class="kpi-row"><span class="k">时段</span><span class="v" style="font-size:10px">${s.startDate.slice(5)}~${s.endDate.slice(5)}</span></div>
+    </div>`;
+  }
+  document.getElementById('kpiGrid').innerHTML = html;
+}
+
+// ========== Canvas 辅助 ==========
+function setupCanvas(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return { ctx, W: rect.width, H: rect.height };
+}
+function cssvar(n) {
+  return getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+}
+
+// ========== 图1: 累计收益曲线 ==========
+function drawEquityCurve() {
+  const canvas = document.getElementById('equityChart');
+  const { ctx, W, H } = setupCanvas(canvas);
+  ctx.clearRect(0,0,W,H);
+  const muted = cssvar('--muted'), grid = cssvar('--border');
+
+  // 收集所有时间戳,组成横轴
+  const allTimes = new Set();
+  const series = {};
+  for (const key of ['V2A','V2B','V3GPT','V3GPTL']) {
+    const data = getFiltered(key);
+    if (!data.length) continue;
+    const sorted = [...data].sort((a,b) => a.close_time.localeCompare(b.close_time));
+    let cum = 0;
+    series[key] = sorted.map(t => {
+      cum += t.profit;
+      return { time: t.close_time, cum };
+    });
+    sorted.forEach(t => allTimes.add(t.close_time));
+  }
+  if (!Object.keys(series).length) return;
+
+  const times = [...allTimes].sort();
+  const timeToX = (t) => {
+    const idx = times.indexOf(t);
+    return left + idx / (times.length-1 || 1) * (right-left);
+  };
+
+  // Y 范围
+  const allY = [];
+  for (const k in series) series[k].forEach(p => allY.push(p.cum));
+  const yMin = Math.min(0, ...allY), yMax = Math.max(0, ...allY);
+  const yPad = (yMax-yMin) * 0.08 || 10;
+  const yLo = yMin - yPad, yHi = yMax + yPad;
+
+  const left = 60, right = W-20, top = 20, bottom = H-30;
+  const yScale = v => bottom - (v-yLo)/(yHi-yLo) * (bottom-top);
+
+  // Y 网格
+  ctx.font = '10px monospace';
+  ctx.fillStyle = muted; ctx.textAlign = 'right';
+  ctx.strokeStyle = grid;
+  for (let i = 0; i <= 5; i++) {
+    const v = yLo + (yHi-yLo) * (1-i/5);
+    const y = yScale(v);
+    ctx.fillText((v>=0?'+':'')+'$'+v.toFixed(0), left-4, y+3);
+    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+  }
+
+  // 零线
+  const yZero = yScale(0);
+  ctx.strokeStyle = muted; ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(left, yZero); ctx.lineTo(right, yZero); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 画各 EA 曲线
+  Object.entries(series).forEach(([key, pts]) => {
+    ctx.strokeStyle = EA_COLORS[key];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = timeToX(p.time), y = yScale(p.cum);
+      if (i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+
+  // X 轴日期标签
+  ctx.textAlign = 'center'; ctx.fillStyle = muted;
+  const labelCount = Math.min(8, times.length);
+  for (let i = 0; i < labelCount; i++) {
+    const idx = Math.floor(i * (times.length-1) / (labelCount-1 || 1));
+    const t = times[idx];
+    const x = left + idx/(times.length-1||1) * (right-left);
+    ctx.fillText(t.slice(5,10), x, bottom+14);
+  }
+
+  // 图例
+  const legend = Object.keys(series).map(k =>
+    `<span class="legend-item"><span class="legend-line" style="background:${EA_COLORS[k]}"></span> ${k}</span>`
+  ).join('');
+  document.getElementById('equityLegend').innerHTML = legend;
+}
+
+// ========== 图2: 每日盈利 ==========
+function drawDailyChart() {
+  const canvas = document.getElementById('dailyChart');
+  const { ctx, W, H } = setupCanvas(canvas);
+  ctx.clearRect(0,0,W,H);
+  const muted = cssvar('--muted'), grid = cssvar('--border');
+
+  // 按 EA 按日分组
+  const dailyMap = {}; // date -> {ea: profit}
+  const eas = [];
+  for (const key of ['V2A','V2B','V3GPT','V3GPTL']) {
+    const data = getFiltered(key);
+    if (!data.length) continue;
+    eas.push(key);
+    data.forEach(t => {
+      const d = t.open_time.slice(0,10);
+      if (!dailyMap[d]) dailyMap[d] = {};
+      dailyMap[d][key] = (dailyMap[d][key] || 0) + t.profit;
+    });
+  }
+  const dates = Object.keys(dailyMap).sort();
+  if (!dates.length || !eas.length) return;
+
+  // Y 范围
+  const allY = [];
+  dates.forEach(d => eas.forEach(k => { if (dailyMap[d][k] !== undefined) allY.push(dailyMap[d][k]); }));
+  const yMin = Math.min(0, ...allY), yMax = Math.max(0, ...allY);
+  const yPad = Math.max(Math.abs(yMax), Math.abs(yMin)) * 0.1;
+  const yLo = yMin - yPad, yHi = yMax + yPad;
+
+  const left = 60, right = W-20, top = 20, bottom = H-40;
+  const yScale = v => bottom - (v-yLo)/(yHi-yLo) * (bottom-top);
+  const groupW = (right-left) / dates.length;
+  const barW = groupW / (eas.length + 1) * 0.85;
+
+  // Y轴
+  ctx.font = '10px monospace';
+  ctx.fillStyle = muted; ctx.textAlign = 'right';
+  ctx.strokeStyle = grid;
+  for (let i = 0; i <= 5; i++) {
+    const v = yLo + (yHi-yLo) * (1-i/5);
+    const y = yScale(v);
+    ctx.fillText((v>=0?'+':'')+'$'+v.toFixed(0), left-4, y+3);
+    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+  }
+
+  // 零线
+  const yZero = yScale(0);
+  ctx.strokeStyle = muted; ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(left, yZero); ctx.lineTo(right, yZero); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 柱
+  dates.forEach((d, di) => {
+    const groupX = left + di * groupW + groupW*0.075;
+    eas.forEach((k, ki) => {
+      const v = dailyMap[d][k];
+      if (v === undefined) return;
+      const x = groupX + ki * barW;
+      const y = yScale(v);
+      const h = Math.abs(y - yZero);
+      ctx.fillStyle = EA_COLORS[k];
+      ctx.fillRect(x, Math.min(y, yZero), barW*0.9, h);
+    });
+
+    // 日期
+    ctx.fillStyle = muted; ctx.textAlign = 'center'; ctx.font = '9px monospace';
+    if (dates.length > 20 && di % 2 !== 0) return;
+    ctx.fillText(d.slice(5), groupX + groupW/2 - groupW*0.075, bottom + 14);
+  });
+}
+
+// ========== 层数分布 ==========
+function renderLayerDist() {
+  let html = '';
+  for (const key of ['V2A','V2B','V3GPT','V3GPTL']) {
+    const data = getFiltered(key);
+    if (!data.length) continue;
+    const layerMap = {};
+    data.forEach(t => {
+      const L = t.layers_used;
+      if (!layerMap[L]) layerMap[L] = { count: 0, profit: 0 };
+      layerMap[L].count++;
+      layerMap[L].profit += t.profit;
+    });
+    let cells = '';
+    for (let L = 1; L <= 11; L++) {
+      const d = layerMap[L];
+      if (!d) {
+        cells += `<div class="layer-cell" style="opacity:0.3"><div class="l">L${L}</div><div class="c">-</div><div class="p">-</div></div>`;
+      } else {
+        const cls = d.profit >= 0 ? 'pos' : 'neg';
+        cells += `<div class="layer-cell">
+          <div class="l">L${L}</div>
+          <div class="c">${d.count}</div>
+          <div class="p ${cls}">${d.profit>=0?'+':''}$${d.profit.toFixed(0)}</div>
+        </div>`;
+      }
+    }
+    html += `<div style="margin-bottom:12px">
+      <div style="color:${EA_COLORS[key]}; font-weight:bold; margin-bottom:6px">${key}</div>
+      <div class="layer-grid">${cells}</div>
+    </div>`;
+  }
+  document.getElementById('layerDist').innerHTML = html;
+}
+
+// ========== 图4: 盈利区间分布 ==========
+function drawRangeChart() {
+  const canvas = document.getElementById('rangeChart');
+  const { ctx, W, H } = setupCanvas(canvas);
+  ctx.clearRect(0,0,W,H);
+  const muted = cssvar('--muted'), grid = cssvar('--border');
+
+  const buckets = [
+    { label: '<-$1k', fn: p => p < -1000 },
+    { label: '-$1k~-500', fn: p => p >= -1000 && p < -500 },
+    { label: '-$500~-100', fn: p => p >= -500 && p < -100 },
+    { label: '-$100~0', fn: p => p >= -100 && p < 0 },
+    { label: '$0-5', fn: p => p >= 0 && p < 5 },
+    { label: '$5-10', fn: p => p >= 5 && p < 10 },
+    { label: '$10-15', fn: p => p >= 10 && p < 15 },
+    { label: '$15-20', fn: p => p >= 15 && p < 20 },
+    { label: '$20-30', fn: p => p >= 20 && p < 30 },
+    { label: '$30-50', fn: p => p >= 30 && p < 50 },
+    { label: '$50-100', fn: p => p >= 50 && p < 100 },
+    { label: '$100-200', fn: p => p >= 100 && p < 200 },
+    { label: '$200+', fn: p => p >= 200 },
+  ];
+
+  const eas = ['V2A','V2B','V3GPT','V3GPTL'].filter(k => getFiltered(k).length);
+  if (!eas.length) return;
+
+  // 计数
+  const counts = {};
+  eas.forEach(k => {
+    const data = getFiltered(k);
+    counts[k] = buckets.map(b => data.filter(t => b.fn(t.profit)).length);
+  });
+  const maxC = Math.max(...eas.flatMap(k => counts[k]));
+  if (maxC === 0) return;
+
+  const left = 40, right = W-20, top = 20, bottom = H-50;
+  const yScale = v => bottom - v/maxC * (bottom-top);
+  const groupW = (right-left) / buckets.length;
+  const barW = groupW / (eas.length + 0.5);
+
+  // Y 轴
+  ctx.font = '10px monospace';
+  ctx.fillStyle = muted; ctx.textAlign = 'right';
+  ctx.strokeStyle = grid;
+  for (let i = 0; i <= 5; i++) {
+    const v = maxC * i / 5;
+    const y = yScale(v);
+    ctx.fillText(Math.round(v), left-3, y+3);
+    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+  }
+
+  // 柱
+  buckets.forEach((b, bi) => {
+    const gx = left + bi * groupW;
+    eas.forEach((k, ki) => {
+      const c = counts[k][bi];
+      if (!c) return;
+      const x = gx + ki * barW + groupW*0.05;
+      const y = yScale(c);
+      const h = bottom - y;
+      ctx.fillStyle = EA_COLORS[k];
+      ctx.fillRect(x, y, barW*0.9, h);
+      if (c > 0) {
+        ctx.fillStyle = cssvar('--text');
+        ctx.textAlign = 'center';
+        ctx.font = '9px monospace';
+        ctx.fillText(c, x + barW*0.45, y-2);
+      }
+    });
+
+    // 标签(斜)
+    ctx.save();
+    ctx.translate(gx + groupW/2, bottom + 10);
+    ctx.rotate(-Math.PI/6);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = muted;
+    ctx.font = '9px monospace';
+    ctx.fillText(b.label, 0, 0);
+    ctx.restore();
+  });
+
+  // 图例
+  const legend = eas.map(k =>
+    `<span class="legend-item"><span class="legend-dot" style="background:${EA_COLORS[k]}"></span> ${k}</span>`
+  ).join('');
+  document.getElementById('rangeLegend').innerHTML = legend;
+}
+
+// ========== 交易明细表 ==========
+function renderTable() {
+  const ea = document.getElementById('filterEA').value;
+  const layer = document.getElementById('filterLayer').value;
+  const dir = document.getElementById('filterDir').value;
+  const res = document.getElementById('filterResult').value;
+  const sortBy = document.getElementById('sortBy').value;
+
+  // 收集
+  let all = [];
+  for (const k of ['V2A','V2B','V3GPT','V3GPTL']) {
+    if (ea !== 'all' && ea !== k) continue;
+    getFiltered(k).forEach(t => all.push({...t, __ea: k}));
+  }
+  // 筛选
+  if (layer !== 'all') all = all.filter(t => t.layers_used == +layer);
+  if (dir !== 'all') all = all.filter(t => t.direction === dir);
+  if (res === 'win') all = all.filter(t => t.profit > 0);
+  else if (res === 'loss') all = all.filter(t => t.profit < 0);
+
+  // 排序
+  all.sort((a,b) => {
+    switch(sortBy) {
+      case 'time_asc': return a.open_time.localeCompare(b.open_time);
+      case 'time_desc': return b.open_time.localeCompare(a.open_time);
+      case 'profit_desc': return b.profit - a.profit;
+      case 'profit_asc': return a.profit - b.profit;
+      case 'layer_desc': return b.layers_used - a.layers_used;
+      case 'duration_desc': return b.duration_sec - a.duration_sec;
+      default: return 0;
+    }
+  });
+
+  // 展示前 500 条 (避免卡)
+  const total = all.length;
+  const show = all.slice(0, 500);
+  document.getElementById('tableCount').textContent = `共 ${total} 笔` + (total > 500 ? ' (显示前500)' : '');
+
+  let html = `<thead><tr>
+    <th>EA</th><th>时间</th><th>方向</th><th>引擎</th>
+    <th>层</th><th>手数</th><th>盈亏</th><th>入场价</th>
+    <th>时长</th><th>关闭原因</th>
+  </tr></thead><tbody>`;
+  show.forEach(t => {
+    const pcls = t.profit > 0 ? 'pos' : (t.profit < 0 ? 'neg' : '');
+    const eng = t.engine_label || '-';
+    const engCls = eng === 'A_REVERSAL' ? 'eng-a' : (eng === 'B_TREND' ? 'eng-b' : '');
+    const engShort = eng === 'A_REVERSAL' ? 'A反' : (eng === 'B_TREND' ? 'B顺' : '-');
+    const L = t.layers_used;
+    const lCls = L <= 3 ? 'layer-shallow' : (L <= 6 ? 'layer-mid' : 'layer-deep');
+    const dirTxt = t.direction === 'BUY' ? '多' : '空';
+    const dur = t.duration_sec;
+    const durTxt = dur >= 3600 ? Math.floor(dur/3600)+'h'+Math.floor((dur%3600)/60)+'m' :
+                   dur >= 60 ? Math.floor(dur/60)+'m'+(dur%60)+'s' : dur+'s';
+    html += `<tr>
+      <td class="${t.__ea.toLowerCase()}"><b>${t.__ea}</b></td>
+      <td>${t.open_time.slice(5)}</td>
+      <td>${dirTxt}</td>
+      <td class="${engCls}">${engShort}</td>
+      <td class="${lCls}">L${L}</td>
+      <td>${(t.total_lots||0).toFixed(2)}</td>
+      <td class="${pcls}">${t.profit>=0?'+':''}$${t.profit.toFixed(2)}</td>
+      <td>${(t.entry_price||0).toFixed(2)}</td>
+      <td style="color:var(--muted)">${durTxt}</td>
+      <td style="color:var(--muted); text-align:left">${t.close_reason||'-'}</td>
+    </tr>`;
+  });
+  html += '</tbody>';
+  document.getElementById('tradeTable').innerHTML = html;
+}
+
+// ========== 重绘 ==========
+function redraw() {
+  renderKPI();
+  drawEquityCurve();
+  drawDailyChart();
+  renderLayerDist();
+  drawRangeChart();
+  renderTable();
+}
+
+window.addEventListener('resize', () => { if (hasAnyData()) redraw(); });
+</script>
+</body>
+</html>
