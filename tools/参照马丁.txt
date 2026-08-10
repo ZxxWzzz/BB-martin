@@ -1,0 +1,487 @@
+
+// --- 输入参数
+// 前12单的手数（第8单根据序列推断为0.09，可按需修改）
+input double Lot1  = 0.01; // 第1单位位
+input double Lot2  = 0.01; // 第2单位位
+input double Lot3  = 0.02; // 第3单位位
+input double Lot4  = 0.03; // 第4单位位
+input double Lot5  = 0.06; // 第5单位位
+input double Lot6  = 0.1; // 第6单位位
+input double Lot7  = 0.1.3; // 第7单位位
+input double Lot8  = 0.09; // 第8单位位（原图60'0，推断为0.09）
+input double Lot9  = 0.21; // 第9单位位
+input double Lot10 = 0.16; // 第10单位位
+input double Lot11 = 0.21; // 第11单位位
+input double Lot12 = 0.27; // 第12单位位
+
+input double LaterMult = 1.3;          // 后期加仓倍率（12单后使用）
+input double FloatLossTrigger = 100.0; // 加仓间距浮亏判断金额（账户货币）
+input int    GapBeforeFloat = 200;      // 浮亏前加仓间距点数
+input int    GapAfterFloat = 200;       // 浮亏后加仓间距点数
+input double SingleTakeProfit = 60.0;   // 单向止盈点数（实际为金额，单位账户货币）
+input double TotalTakeProfit = 60.0;    // 整体止盈点数（实际为金额，单位账户货币）
+input double StopLossAmount = 0.0;      // 止损金额（0不启用）
+input string OrderComment = "111";       // 订单注释
+input color  BullColor = Blue;           // 多单颜色标记
+input color  BearColor = Red;            // 空单颜色标记
+input string IndicatorName = "小艺2";    // 指标名称
+input ENUM_TIMEFRAMES IndicatorTF = PERIOD_M30; // 指标时间周期（30分钟）
+
+// --- 输入参数（根据第二张图片：点差保护和流动性风控）---
+input bool   UseSpreadProtection = true;    // 启用点差保护
+input int    MaxSpread = 60;                 // 最大允许点差(点)
+input int    SpreadBuffer = 5;                // 点差缓冲点数
+input bool   UseLiquidityRisk = true;         // 启用流动性风控
+input int    LiquidityTriggerPoints = 0;      // 触发风控的最小间隔点数（需用户填写）
+input int    LiquidityPauseMinutes = 0;       // 触发风控后暂停交易时间(分钟)
+
+// --- 全局变量 ---
+int          currentDirection = 0;            // 当前趋势方向：1多，-1空，0无信号
+int          orderCount = 0;                   // 当前方向上的开仓次数（用于决定手数）
+double       lastOpenPrice = 0;                 // 最后一次开仓的价格（同向）
+double       lastLot = 0;                       // 最后一次开仓的手数（用于后期倍率）
+datetime     liquidityPauseUntil = 0;           // 流动性风控暂停交易截止时间
+double       lotArray[12];                       // 存储前12单的手数
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   // 初始化手数数组
+   lotArray[0] = Lot1;
+   lotArray[1] = Lot2;
+   lotArray[2] = Lot3;
+   lotArray[3] = Lot4;
+   lotArray[4] = Lot5;
+   lotArray[5] = Lot6;
+   lotArray[6] = Lot7;
+   lotArray[7] = Lot8;
+   lotArray[8] = Lot9;
+   lotArray[9] = Lot10;
+   lotArray[10]= Lot11;
+   lotArray[11]= Lot12;
+
+   // 检查指标是否存在（可选）
+   if (iCustom(NULL, IndicatorTF, IndicatorName, 0, 0) == 0)
+   {
+      Print("警告：指标 ", IndicatorName, " 未找到，请确保已安装。");
+   }
+
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   // 清理工作（如有必要）
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // 1. 获取当前趋势方向
+   int newDirection = GetTrendDirection();
+   
+   // 2. 如果趋势方向改变，平掉所有订单并重置状态
+   if (newDirection != currentDirection && currentDirection != 0)
+   {
+      CloseAllOrders();
+      ResetState();
+   }
+   currentDirection = newDirection;
+   
+   // 如果没有趋势信号，不进行任何操作
+   if (currentDirection == 0)
+      return;
+
+   // 3. 检查止盈止损
+   CheckTakeProfitAndStopLoss();
+
+   // 4. 检查是否需要开仓（首次开仓或加仓）
+   CheckAndOpen();
+
+   // 5. 更新当前方向上的订单计数（用于手数计算）—— 实际在开仓时已更新，这里不需要
+}
+
+//+------------------------------------------------------------------+
+//| 获取趋势方向（调用自定义指标）                                    |
+//+------------------------------------------------------------------+
+int GetTrendDirection()
+{
+   double indValue = iCustom(NULL, IndicatorTF, IndicatorName, 0, 0);
+   if (indValue > 0) return 1;      // 多头
+   if (indValue < 0) return -1;     // 空头
+   return 0;                         // 无信号
+}
+
+//+------------------------------------------------------------------+
+//| 检查止盈止损并平仓                                                |
+//+------------------------------------------------------------------+
+void CheckTakeProfitAndStopLoss()
+{
+   double profitLong = 0, profitShort = 0, totalProfit = 0;
+   int total = OrdersTotal();
+   for (int i = total - 1; i >= 0; i--)
+   {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber())
+         {
+            if (OrderType() == OP_BUY)
+               profitLong += OrderProfit() + OrderSwap() + OrderCommission();
+            else if (OrderType() == OP_SELL)
+               profitShort += OrderProfit() + OrderSwap() + OrderCommission();
+         }
+      }
+   }
+   totalProfit = profitLong + profitShort;
+
+   // 单向止盈（多单）
+   if (SingleTakeProfit > 0 && profitLong >= SingleTakeProfit)
+   {
+      CloseOrdersByType(OP_BUY);
+      // 如果该方向平仓后，当前趋势仍为多，则重置计数以便重新开仓
+      if (currentDirection == 1)
+         ResetDirectionState();
+   }
+   // 单向止盈（空单）
+   if (SingleTakeProfit > 0 && profitShort >= SingleTakeProfit)
+   {
+      CloseOrdersByType(OP_SELL);
+      if (currentDirection == -1)
+         ResetDirectionState();
+   }
+   // 整体止盈
+   if (TotalTakeProfit > 0 && totalProfit >= TotalTakeProfit)
+   {
+      CloseAllOrders();
+      ResetState();
+   }
+   // 止损
+   if (StopLossAmount > 0 && totalProfit <= -StopLossAmount)
+   {
+      CloseAllOrders();
+      ResetState();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| 检查并执行开仓（首次或加仓）                                      |
+//+------------------------------------------------------------------+
+void CheckAndOpen()
+{
+   // 如果处于流动性风控暂停期，不交易
+   if (UseLiquidityRisk && TimeCurrent() < liquidityPauseUntil)
+      return;
+
+   // 获取当前应使用的加仓间距
+   int gap = GetCurrentGap();
+
+   // 获取当前方向的持仓情况
+   int buyCount = 0, sellCount = 0;
+   double lastBuyPrice = 0, lastSellPrice = 0;
+   GetPositionInfo(buyCount, sellCount, lastBuyPrice, lastSellPrice);
+
+   // 根据趋势方向决定操作
+   if (currentDirection == 1) // 多头
+   {
+      // 如果没有多单，开第一单
+      if (buyCount == 0)
+      {
+         if (CanOpen(OP_BUY))
+            OpenOrder(OP_BUY, GetLotByCount(1));
+      }
+      else
+      {
+         // 有持仓，检查加仓条件：价格下跌超过间距
+         double priceCondition = lastBuyPrice - gap * Point;
+         if (Ask <= priceCondition) // 注意：做多时，我们以Ask作为开仓价，价格下跌到条件
+         {
+            if (CanOpen(OP_BUY))
+            {
+               int newCount = buyCount + 1;
+               double lot = GetLotByCount(newCount);
+               OpenOrder(OP_BUY, lot);
+            }
+         }
+      }
+   }
+   else if (currentDirection == -1) // 空头
+   {
+      if (sellCount == 0)
+      {
+         if (CanOpen(OP_SELL))
+            OpenOrder(OP_SELL, GetLotByCount(1));
+      }
+      else
+      {
+         double priceCondition = lastSellPrice + gap * Point;
+         if (Bid >= priceCondition) // 做空，价格上涨超过间距
+         {
+            if (CanOpen(OP_SELL))
+            {
+               int newCount = sellCount + 1;
+               double lot = GetLotByCount(newCount);
+               OpenOrder(OP_SELL, lot);
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| 获取当前应使用的加仓间距（基于浮亏判断）                          |
+//+------------------------------------------------------------------+
+int GetCurrentGap()
+{
+   double currentLoss = GetTotalLoss(); // 获取当前总浮亏（负值，取绝对值）
+   if (currentLoss >= FloatLossTrigger)
+      return GapAfterFloat;
+   else
+      return GapBeforeFloat;
+}
+
+//+------------------------------------------------------------------+
+//| 获取当前总浮亏金额（绝对值）                                      |
+//+------------------------------------------------------------------+
+double GetTotalLoss()
+{
+   double loss = 0;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber())
+         {
+            double profit = OrderProfit() + OrderSwap() + OrderCommission();
+            if (profit < 0) loss += (-profit);
+         }
+      }
+   }
+   return loss;
+}
+
+//+------------------------------------------------------------------+
+//| 获取当前方向持仓信息（数量及最后一次开仓价）                      |
+//+------------------------------------------------------------------+
+void GetPositionInfo(int &buyCount, int &sellCount, double &lastBuyPrice, double &lastSellPrice)
+{
+   buyCount = 0;
+   sellCount = 0;
+   lastBuyPrice = 0;
+   lastSellPrice = 0;
+   datetime lastBuyTime = 0, lastSellTime = 0;
+
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber())
+         {
+            if (OrderType() == OP_BUY)
+            {
+               buyCount++;
+               if (OrderOpenTime() > lastBuyTime)
+               {
+                  lastBuyTime = OrderOpenTime();
+                  lastBuyPrice = OrderOpenPrice();
+               }
+            }
+            else if (OrderType() == OP_SELL)
+            {
+               sellCount++;
+               if (OrderOpenTime() > lastSellTime)
+               {
+                  lastSellTime = OrderOpenTime();
+                  lastSellPrice = OrderOpenPrice();
+               }
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| 根据开仓次数获取手数                                              |
+//+------------------------------------------------------------------+
+double GetLotByCount(int count)
+{
+   if (count <= 12)
+   {
+      return lotArray[count-1];
+   }
+   else
+   {
+      // 从第13单开始，使用第12单手数乘以倍率的(count-12)次方
+      double lot = lotArray[11];
+      for (int i = 12; i < count; i++)
+         lot *= LaterMult;
+      return NormalizeDouble(lot, 2);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| 检查是否可以开仓（点差保护、流动性风控等）                        |
+//+------------------------------------------------------------------+
+bool CanOpen(int cmd)
+{
+   // 点差保护
+   if (UseSpreadProtection)
+   {
+      int currentSpread = (int)((Ask - Bid) / Point);
+      if (currentSpread > MaxSpread + SpreadBuffer)
+      {
+         Print("点差过大，当前点差：", currentSpread, " 最大允许：", MaxSpread+SpreadBuffer, " 暂不开仓");
+         return false;
+      }
+   }
+
+   // 流动性风控：检查价格变动是否过大（以1分钟K线收盘价为参考）
+   if (UseLiquidityRisk && LiquidityTriggerPoints > 0)
+   {
+      double prevClose = iClose(NULL, PERIOD_M1, 1); // 前一分钟收盘价
+      double currentPrice = (cmd == OP_BUY) ? Ask : Bid;
+      if (MathAbs(currentPrice - prevClose) / Point >= LiquidityTriggerPoints)
+      {
+         // 触发风控，设置暂停截止时间
+         liquidityPauseUntil = TimeCurrent() + LiquidityPauseMinutes * 60;
+         Print("流动性风控触发，暂停交易至 ", TimeToString(liquidityPauseUntil));
+         return false;
+      }
+   }
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| 开仓函数                                                          |
+//+------------------------------------------------------------------+
+void OpenOrder(int cmd, double lot)
+{
+   // 对手数进行最小限制检查
+   double minLot = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_MAX);
+   lot = MathMax(minLot, MathMin(maxLot, lot));
+   lot = NormalizeDouble(lot, 2);
+
+   int slippage = 3; // 滑点
+   color clr = (cmd == OP_BUY) ? BullColor : BearColor;
+   int ticket = OrderSend(Symbol(), cmd, lot, (cmd == OP_BUY ? Ask : Bid), slippage, 0, 0, OrderComment, MagicNumber(), 0, clr);
+   if (ticket > 0)
+   {
+      // 更新最后开仓价和手数
+      if (cmd == OP_BUY)
+      {
+         lastOpenPrice = Ask;
+      }
+      else
+      {
+         lastOpenPrice = Bid;
+      }
+      lastLot = lot;
+      // 增加该方向的开仓计数（通过重新获取持仓数来更新，避免手动计数错误）
+      // 但这里简单增加全局计数，但注意如果同时有多空，需要区分。由于我们只做一个方向，可以统一用orderCount表示当前方向订单数
+      // 但为了准确，下面更新orderCount
+      int buyCount, sellCount;
+      double dummy;
+      GetPositionInfo(buyCount, sellCount, dummy, dummy);
+      orderCount = (currentDirection == 1) ? buyCount : sellCount;
+   }
+   else
+   {
+      Print("开仓失败，错误：", GetLastError());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| 按类型平仓                                                       |
+//+------------------------------------------------------------------+
+void CloseOrdersByType(int cmd)
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber() && OrderType() == cmd)
+         {
+            if (!OrderClose(OrderTicket(), OrderLots(), (cmd == OP_BUY ? Bid : Ask), 3, clrNONE))
+               Print("平仓失败，订单号：", OrderTicket(), " 错误：", GetLastError());
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| 平掉所有订单                                                     |
+//+------------------------------------------------------------------+
+void CloseAllOrders()
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber())
+         {
+            int cmd = OrderType();
+            double price = (cmd == OP_BUY) ? Bid : Ask;
+            if (!OrderClose(OrderTicket(), OrderLots(), price, 3, clrNONE))
+               Print("平仓失败，订单号：", OrderTicket(), " 错误：", GetLastError());
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| 重置状态（无持仓时调用）                                          |
+//+------------------------------------------------------------------+
+void ResetState()
+{
+   orderCount = 0;
+   lastOpenPrice = 0;
+   lastLot = 0;
+   currentDirection = 0; // 注意：方向由指标决定，不应重置为0，但这里在平仓后重置，方向会在下一tick重新获取
+}
+
+//+------------------------------------------------------------------+
+//| 重置当前方向的状态（当单向止盈平掉该方向后，但趋势未变）          |
+//+------------------------------------------------------------------+
+void ResetDirectionState()
+{
+   // 只重置该方向的计数，但注意可能仍有另一方向订单？我们只做一个方向，所以简单重置所有
+   // 但为了安全，重新获取持仓数
+   int buyCount, sellCount;
+   double dummy;
+   GetPositionInfo(buyCount, sellCount, dummy, dummy);
+   if (currentDirection == 1)
+      orderCount = buyCount;
+   else if (currentDirection == -1)
+      orderCount = sellCount;
+   else
+      orderCount = 0;
+   // 最后开仓价也需要更新为当前方向最后一单的价格
+   if (orderCount > 0)
+   {
+      if (currentDirection == 1)
+         lastOpenPrice = dummy; // 需要从GetPositionInfo获取，但上面未返回，这里简化：重新获取一次
+      else
+         lastOpenPrice = dummy;
+   }
+   else
+   {
+      lastOpenPrice = 0;
+      lastLot = 0;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| 获取魔术编号（基于脚本名称和图表ID等，确保唯一）                  |
+//+------------------------------------------------------------------+
+int MagicNumber()
+{
+   return 20240311; // 固定一个，可自行修改
+}

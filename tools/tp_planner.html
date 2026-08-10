@@ -277,13 +277,14 @@
           <button onclick="loadPreset('V3GPT')" style="background:#8250df;color:white">V3GPT (11层等差⭐)</button>
           <button onclick="loadPreset('V3GPTL')" style="background:#bf8700;color:white">V3GPTL (9层等差⭐)</button>
           <button onclick="loadPreset('V4')" style="background:#0969da;color:white">V4 (分层风控⭐)</button>
+          <button onclick="loadPreset('CENT22')" style="background:#6e7681;color:white">CENT22 (22层美分)</button>
         </div>
       </div>
       <div class="field">
-        <label>层数控制 (3-20)</label>
+        <label>层数控制 (3-30)</label>
         <div style="display:flex; align-items:center; gap:8px">
           <button onclick="changeLayers(-1)" style="background:var(--input-bg); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-weight:bold">−</button>
-          <input type="number" id="layerCountInput" value="11" min="3" max="20" style="width:60px; text-align:center; background:var(--input-bg); border:1px solid var(--border); color:var(--text); padding:4px; border-radius:4px; font-family:monospace; font-weight:bold">
+          <input type="number" id="layerCountInput" value="11" min="3" max="30" style="width:60px; text-align:center; background:var(--input-bg); border:1px solid var(--border); color:var(--text); padding:4px; border-radius:4px; font-family:monospace; font-weight:bold">
           <button onclick="changeLayers(1)" style="background:var(--input-bg); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-weight:bold">+</button>
           <span style="color:var(--muted); font-size:11px">层</span>
         </div>
@@ -371,7 +372,7 @@
 <script>
 let direction = 1;
 let currentLayers = 11;         // 可动态调整
-const MAX_LAYER_LIMIT = 20;     // 硬上限
+const MAX_LAYER_LIMIT = 30;     // 硬上限
 const MIN_LAYER_LIMIT = 3;      // 硬下限
 
 // 预设方案 - 对应实际EA版本
@@ -417,6 +418,12 @@ const PRESETS = {
     dist:   [0, 4, 5, 7, 9, 11, 13, 16, 20],
     lot:    [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10],
     bounce: [8, 5, 3, 2, 2, 1, 1, -9, -14],
+  },
+  CENT22: {
+    name: 'CENT22(22层Δ=2·美分账户练手·L13后×1.3累乘)',
+    dist:   [0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+    lot:    [0.01, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09, 0.12, 0.16, 0.21, 0.27, 0.351, 0.4563, 0.5932, 0.7712, 1.0026, 1.3034, 1.6944, 2.2027, 2.8635, 3.7225],
+    bounce: [3, 2, 1.5, 1.2, 1, 0.8, 0.6, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.12, 0.1, 0.08, 0.06, 0.05, 0.04, 0.03, 0.025, 0.02],
   },
 };
 
