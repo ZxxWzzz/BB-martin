@@ -1,0 +1,291 @@
+//+------------------------------------------------------------------+
+//|                                  Gold_Martin_V4.mq4 |
+//|                        Copyright 2026, MetaQuotes Software Corp. |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2026, MetaQuotes Software Corp."
+#property link      "https://www.mql5.com"
+#property version   "4.00"
+#property strict
+
+//============ 外部参数，EA面板直接修改 ============
+input ENUM_TIMEFRAMES SignalTimeFrame = PERIOD_M15;    //判断方向周期 PERIOD_M5 / PERIOD_M15 / PERIOD_M30
+input double LossPriceGap     = 2.0;                   //浮亏价差(美金)，达到该浮亏触发加仓
+input double AvgProfitTarget = 0.6;                    //平均盈利金价波动0.6美金全部平仓
+input int MaxOrderCount      = 12;                     //最大总订单数，防止无限加仓
+input double MultiAfter4     = 0.5;                    //第5单起加仓倍数【默认0.5，可手动修改】
+input int MagicNum           = 8866;
+
+//前4单固定手数组：第1~4单
+double fixedLotArr[]={0.01,0.02,0.03,0.04};
+
+//+------------------------------------------------------------------+
+// 获取均线信号 1=做多，-1=做空，0=无信号
+int GetSignal()
+{
+   double maFast = iMA(_Symbol,SignalTimeFrame,20,0,MODE_SMA,PRICE_CLOSE,0);
+   double maSlow = iMA(_Symbol,SignalTimeFrame,50,0,MODE_SMA,PRICE_CLOSE,0);
+   if(maFast>maSlow) return 1;   //做多条件：MA20>MA50
+   if(maFast<maSlow) return -1;  //做空条件：MA20<MA50
+   return 0;
+}
+
+//统计本EA的订单：区分多单、空单
+struct PosStat
+{
+   int buyCnt;                //多单数量
+   int sellCnt;               //空单数量
+   double buyAvgProfitPrice;  //多单加权平均金价盈亏(美金)
+   double sellAvgProfitPrice; //空单加权平均金价盈亏(美金)
+   double buyTotalLot;
+   double sellTotalLot;
+};
+
+bool GetPositionStat(PosStat &stat)
+{
+   stat.buyCnt=0; stat.sellCnt=0;
+   stat.buyAvgProfitPrice=0; stat.sellAvgProfitPrice=0;
+   stat.buyTotalLot=0; stat.sellTotalLot=0;
+
+   double sumBuyLot=0,sumSellLot=0;
+   double sumBuyProMulLot=0,sumSellProMulLot=0;
+
+   for(int i=0;i<OrdersTotal();i++)
+   {
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(OrderSymbol()!=_Symbol || OrderMagicNumber()!=MagicNum) continue;
+
+      double lot=OrderLots();
+      double currPrice;
+      double proPrice;
+
+      if(OrderType()==OP_BUY)
+      {
+         stat.buyCnt++;
+         currPrice=Bid;
+         proPrice = currPrice - OrderOpenPrice();
+         sumBuyLot += lot;
+         sumBuyProMulLot += proPrice * lot;
+      }
+      else if(OrderType()==OP_SELL)
+      {
+         stat.sellCnt++;
+         currPrice=Ask;
+         proPrice = OrderOpenPrice() - currPrice;
+         sumSellLot += lot;
+         sumSellProMulLot += proPrice * lot;
+      }
+   }
+   if(sumBuyLot>0) stat.buyAvgProfitPrice = sumBuyProMulLot / sumBuyLot;
+   if(sumSellLot>0) stat.sellAvgProfitPrice = sumSellProMulLot / sumSellLot;
+   stat.buyTotalLot=sumBuyLot;
+   stat.sellTotalLot=sumSellLot;
+   return (stat.buyCnt+stat.sellCnt)>0;
+}
+
+//获取该方向上最后一单的手数
+double GetLastLotByDir(int dir,PosStat &stat)
+{
+   double lastLot=0;
+   for(int i=0;i<OrdersTotal();i++)
+   {
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(OrderSymbol()!=_Symbol || OrderMagicNumber()!=MagicNum) continue;
+      if(dir==1 && OrderType()!=OP_BUY) continue;
+      if(dir==-1 && OrderType()!=OP_SELL) continue;
+      lastLot=OrderLots();
+   }
+   return lastLot;
+}
+
+//手数规整最小0.01
+double NormalizeLot(double lotVal)
+{
+   lotVal=NormalizeDouble(lotVal,2);
+   if(lotVal<0.01) lotVal=0.01;
+   return lotVal;
+}
+
+//开仓函数
+bool OpenTrade(int dir, double lots)
+{
+   lots = NormalizeLot(lots);
+   MqlTradeRequest req={0};
+   MqlTradeResult res={0};
+   req.action=TRADE_ACTION_DEAL;
+   req.symbol=_Symbol;
+   req.volume=lots;
+   req.deviation=10;
+   req.magic=MagicNum;
+   req.type_filling=ORDER_FILLING_FOK;
+
+   if(dir==1)
+   {
+      req.type=ORDER_TYPE_BUY;
+      req.price=Ask;
+   }
+   else
+   {
+      req.type=ORDER_TYPE_SELL;
+      req.price=Bid;
+   }
+   if(!OrderSend(req,res))
+   {
+      return false;
+   }
+   return true;
+}
+
+//平掉指定方向全部订单
+void CloseAllByDir(int dir)
+{
+   for(int i=OrdersTotal()-1;i>=0;i--)
+   {
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(OrderSymbol()!=_Symbol || OrderMagicNumber()!=MagicNum) continue;
+      if(dir==1 && OrderType()!=OP_BUY) continue;
+      if(dir==-1 && OrderType()!=OP_SELL) continue;
+
+      ulong tick = OrderTicket();
+      MqlTradeRequest req={0};
+      MqlTradeResult res={0};
+      req.action=TRADE_ACTION_DEAL;
+      req.symbol=_Symbol;
+      req.ticket=tick;
+      req.volume=OrderLots();
+      req.deviation=10;
+      req.type_filling=ORDER_FILLING_FOK;
+
+      if(OrderType()==OP_BUY)
+      {
+         req.type=ORDER_TYPE_SELL;
+         req.price=Bid;
+      }
+      else
+      {
+         req.type=ORDER_TYPE_BUY;
+         req.price=Ask;
+      }
+      OrderSend(req,res);
+   }
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   PosStat stat;
+   GetPositionStat(stat);
+   int totalPos = stat.buyCnt + stat.sellCnt;
+
+   //======== 分别处理多单、空单各自平仓条件：各自方向平均盈利达到0.6就平该方向全部 ========
+   if(stat.buyCnt>0 && stat.buyAvgProfitPrice >= AvgProfitTarget)
+   {
+      CloseAllByDir(1);
+      return;
+   }
+   if(stat.sellCnt>0 && stat.sellAvgProfitPrice >= AvgProfitTarget)
+   {
+      CloseAllByDir(-1);
+      return;
+   }
+
+   int sig = GetSignal();
+   if(sig==0) return; //无信号不开仓
+
+   //======== 初始开仓逻辑 ========
+   if(totalPos == 0)
+   {
+      OpenTrade(sig,fixedLotArr[0]);
+      return;
+   }
+
+   //==== 规则核心：
+   //1. 存在未解套多单(stat.buyCnt>0)：即使信号做空，允许新开空单；
+   //2. 多单全部平仓 stat.buyCnt==0，信号做空，则不再开多，只做空；
+   //3. 存在未解套空单(stat.sellCnt>0)：即使信号做多，允许新开多单；
+   //4. 空单全部平仓 stat.sellCnt==0，信号做多，则不再开空，只做多；
+
+   //---------- 处理做多方向开仓/加仓 ----------
+   bool allowOpenBuy=false;
+   if(sig == 1)
+   {
+      if(stat.sellCnt>0)
+      {
+         //还有空单未解套，允许开多（多空共存）
+         allowOpenBuy=true;
+      }
+      else
+      {
+         //空单已经全部解套平仓，当前信号做多，允许开多
+         allowOpenBuy=true;
+      }
+   }
+   if(allowOpenBuy)
+   {
+      if(stat.buyCnt < MaxOrderCount)
+      {
+         //满足浮亏条件才加仓
+         if(stat.buyCnt>0 && stat.buyAvgProfitPrice <= -LossPriceGap)
+         {
+            double nextLot;
+            if(stat.buyCnt <4)
+            {
+               nextLot = fixedLotArr[stat.buyCnt];
+            }
+            else
+            {
+               double lastLot = GetLastLotByDir(1,stat);
+               nextLot = lastLot * MultiAfter4;
+            }
+            OpenTrade(1,nextLot);
+         }
+         //没有多单，开第一笔多单
+         if(stat.buyCnt == 0)
+         {
+            OpenTrade(1,fixedLotArr[0]);
+         }
+      }
+   }
+
+   //---------- 处理做空方向开仓/加仓 ----------
+   bool allowOpenSell=false;
+   if(sig == -1)
+   {
+      if(stat.buyCnt>0)
+      {
+         //还有多单未解套，允许开空（多空共存）
+         allowOpenSell=true;
+      }
+      else
+      {
+         //多单全部解套平仓，当前信号做空，允许开空
+         allowOpenSell=true;
+      }
+   }
+   if(allowOpenSell)
+   {
+      if(stat.sellCnt < MaxOrderCount)
+      {
+         //满足浮亏条件才加仓
+         if(stat.sellCnt>0 && stat.sellAvgProfitPrice <= -LossPriceGap)
+         {
+            double nextLot;
+            if(stat.sellCnt <4)
+            {
+               nextLot = fixedLotArr[stat.sellCnt];
+            }
+            else
+            {
+               double lastLot = GetLastLotByDir(-1,stat);
+               nextLot = lastLot * MultiAfter4;
+            }
+            OpenTrade(-1,nextLot);
+         }
+         //没有空单，开第一笔空单
+         if(stat.sellCnt == 0)
+         {
+            OpenTrade(-1,fixedLotArr[0]);
+         }
+      }
+   }
+}
+//+------------------------------------------------------------------+
