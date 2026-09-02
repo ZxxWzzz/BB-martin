@@ -1,15 +1,17 @@
 //+------------------------------------------------------------------+
 //|                                              美分马丁-stable.mq5 |
-//|                                                      Version 1.1 |
+//|                                                      Version 1.2 |
 //|                                                                  |
-//|  v1.1 变更 (vs v1.0):                                             |
-//|    + 黑天鹅熔断: M1 波动>=$20 触发, 全平+冻结+警报                |
-//|      (但浮亏率 >= 账户余额 25% 时保留持仓, 只冻结不平)            |
-//|    + 点差保护: 超阈值禁开新仓, 面板实时显示                       |
-//|    + 新闻过滤: FOMC / CPI / PPI / NFP 前后 30min 禁开新仓         |
-//|    + 面板 HUD: 层数/浮盈/点差/新闻/冻结状态                       |
-//|    + 完整日志: 开仓/加仓/平仓/保护触发全部落 Print                |
+//|  v1.2 变更 (vs v1.1): 手数序列对齐真机 CENT22                     |
+//|    * MaxOrderCount 12 → 22 (真机数据里曾到 L23, 22 层留一层缓冲)  |
+//|    * fixedLotArr 扩到 12 层, 直接用真机反推的手数序列              |
+//|      [0.01, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09,             |
+//|       0.12, 0.16, 0.21, 0.27]                                     |
+//|    * L13+ 仍用 MultiAfter4=1.3 累乘                                |
+//|    * 触发查表分界: sellCnt/buyCnt < 4 → < 12                       |
+//|    * 开单失败冷却 (默认 2 秒, 避免 auto trading disabled 刷屏)     |
 //|                                                                  |
+//|  v1.1 (2026-09-02): 黑天鹅+点差+新闻+面板 HUD+完整日志            |
 //|  v1.0 (2026-09-01): 基于 MT4 参照策略迁移到 MT5, MultiAfter4=1.3  |
 //|                                                                  |
 //|  策略骨架:                                                        |
@@ -22,8 +24,8 @@
 //|    - 允许多空共存 (需 Hedging 账户)                               |
 //+------------------------------------------------------------------+
 #property copyright "美分马丁-stable"
-#property version   "1.10"
-#property description "美分马丁-stable v1.1 (黑天鹅+点差+新闻+面板+日志)"
+#property version   "1.20"
+#property description "美分马丁-stable v1.2 (手数对齐真机 CENT22, MaxLayers=22)"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -33,8 +35,8 @@ input group "=== 策略核心 ==="
 input ENUM_TIMEFRAMES SignalTimeFrame = PERIOD_M15;    // 判断方向周期
 input double LossPriceGap    = 2.0;                    // 加仓浮亏阈值(美金)
 input double AvgProfitTarget = 0.6;                    // 平仓浮盈阈值(美金)
-input int    MaxOrderCount   = 12;                     // 每方向最大层数
-input double MultiAfter4     = 1.3;                    // 第5单起加仓倍数
+input int    MaxOrderCount   = 22;                     // 每方向最大层数 (v1.2: 12→22 对齐真机)
+input double MultiAfter4     = 1.3;                    // L13+ 加仓倍数 (前 12 层用 fixedLotArr 查表)
 input int    MagicNum        = 8866;
 input int    Slippage        = 10;                     // 允许滑点(points)
 
@@ -56,6 +58,7 @@ input int    Inp_NewsMinAfter   = 30;                  // 事件后 X 分钟
 input group "=== 面板 & 日志 ==="
 input bool   Inp_ShowPanel      = true;
 input bool   Inp_VerboseLog     = true;
+input int    Inp_OpenFailCoolSec = 2;                  // 开单失败后冷却 X 秒 (避免刷屏)
 
 //---- 全局
 CTrade   trade;
@@ -64,9 +67,11 @@ int      maSlowHandle = INVALID_HANDLE;
 bool     emergencyFrozen = false;
 bool     lastNewsBlocked = false;
 bool     lastSpreadHi    = false;
+datetime lastOpenFailTs  = 0;
 string   panelPfx = "StableP_";
 
-double fixedLotArr[] = {0.01, 0.02, 0.03, 0.04};
+// v1.2: L1-L12 直接用真机 CENT22 反推的手数序列 (L2 复用 L1)
+double fixedLotArr[] = {0.01, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09, 0.12, 0.16, 0.21, 0.27};
 
 struct PosStat
 {
@@ -114,14 +119,16 @@ int OnInit()
    emergencyFrozen = false;
    lastNewsBlocked = false;
    lastSpreadHi    = false;
+   lastOpenFailTs  = 0;
 
    Print("=============================================");
-   Print("=== 美分马丁-stable v1.1 启动 ===");
+   Print("=== 美分马丁-stable v1.2 启动 ===");
    Print("信号周期=", EnumToString(SignalTimeFrame),
          "  加仓浮亏=$", LossPriceGap,
          "  平仓浮盈=$", AvgProfitTarget);
-   Print("首4单=[0.01,0.02,0.03,0.04]  L5+倍率=", MultiAfter4,
-         "  最大层数=", MaxOrderCount);
+   Print("L1-L12 查表: [0.01,0.01,0.02,0.03,0.04,0.05,0.07,0.09,0.12,0.16,0.21,0.27]");
+   Print("L13+ 倍率=", MultiAfter4, "  最大层数=", MaxOrderCount,
+         "  开单失败冷却=", Inp_OpenFailCoolSec, "秒");
    Print("[保护] 黑天鹅=", Inp_BlackSwan ? "开" : "关",
          "(M1>$", Inp_BlackSwanRange, ", 平仓阈值<", Inp_MaxCloseLossPct, "%)");
    Print("[保护] 点差过滤: >", Inp_MaxSpread + Inp_SpreadBuffer, " pt 禁开");
@@ -300,11 +307,18 @@ bool OpenTrade(int dir, double lots, int layer)
             "  Lots=", DoubleToString(lots,2),
             "  Price=", DoubleToString(price,2),
             "  总浮盈=", DoubleToString(CalcTotalProfit(),2));
+      lastOpenFailTs = 0;   // 成功后清失败节流
    }
    else
    {
-      Print("[stable] ❌ 开单失败 dir=", dir, " lots=", lots,
-            " err=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+      // 失败限流: 冷却期内同类错误只打印一次, 避免刷屏 (auto trading disabled 等场景)
+      if(TimeCurrent() - lastOpenFailTs >= Inp_OpenFailCoolSec)
+      {
+         Print("[stable] ❌ 开单失败 dir=", dir, " lots=", lots,
+               " err=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription(),
+               " (", Inp_OpenFailCoolSec, "s 内重复失败仅记 1 次)");
+         lastOpenFailTs = TimeCurrent();
+      }
    }
    return ok;
 }
@@ -467,7 +481,7 @@ void UpdatePanel()
    long   spd     = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    int    spdMax  = Inp_MaxSpread + Inp_SpreadBuffer;
 
-   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.1 ===", clrGold); y += lh + 4;
+   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.2 ===", clrGold); y += lh + 4;
 
    string buyStr = StringFormat("多: L%d/%d  手数:%.2f  浮盈:%.2f",
                                 stat.buyCnt, MaxOrderCount, stat.buyTotalLot, buyP);
@@ -519,6 +533,7 @@ void UpdatePanel()
    ChartRedraw();
 }
 
+//+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
 void OnTick()
 {
@@ -612,8 +627,8 @@ void OnTick()
       if(stat.buyCnt > 0 && stat.buyAvgProfitPrice <= -LossPriceGap)
       {
          double nextLot;
-         if(stat.buyCnt < 4) nextLot = fixedLotArr[stat.buyCnt];
-         else                nextLot = GetLastLotByDir(1) * MultiAfter4;
+         if(stat.buyCnt < 12) nextLot = fixedLotArr[stat.buyCnt];
+         else                 nextLot = GetLastLotByDir(1) * MultiAfter4;
          if(Inp_VerboseLog)
             Print("[stable] 触发加多 L", stat.buyCnt+1,
                   ": 均价浮亏=", DoubleToString(stat.buyAvgProfitPrice,3),
@@ -633,8 +648,8 @@ void OnTick()
       if(stat.sellCnt > 0 && stat.sellAvgProfitPrice <= -LossPriceGap)
       {
          double nextLot;
-         if(stat.sellCnt < 4) nextLot = fixedLotArr[stat.sellCnt];
-         else                 nextLot = GetLastLotByDir(-1) * MultiAfter4;
+         if(stat.sellCnt < 12) nextLot = fixedLotArr[stat.sellCnt];
+         else                  nextLot = GetLastLotByDir(-1) * MultiAfter4;
          if(Inp_VerboseLog)
             Print("[stable] 触发加空 L", stat.sellCnt+1,
                   ": 均价浮亏=", DoubleToString(stat.sellAvgProfitPrice,3),
