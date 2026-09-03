@@ -1,6 +1,14 @@
 //+------------------------------------------------------------------+
 //|                                              美分马丁-stable.mq5 |
-//|                                                      Version 1.2 |
+//|                                                      Version 1.3 |
+//|                                                                  |
+//|  v1.3 变更 (vs v1.2):                                             |
+//|    * [C1] fixedLotArr 分界由硬编码 12 改为 ArraySize()             |
+//|    * [C3] LossPriceGap/AvgProfitTarget 注释修正:单位=USD/oz       |
+//|           新增 Inp_MinUsdProfit 美元浮盈兜底 (默认0=不启用)         |
+//|    * [H1] MA 信号取已收盘 bar[1], 避免未收 bar[0] 每 tick 抖动     |
+//|    * [H2] CalendarValueHistory 缓存 60s, 避免每 tick 拉外部数据    |
+//|    * [M2] 开单失败区分致命错误 (NO_MONEY/LIMIT_VOLUME 等直接冻结)  |
 //|                                                                  |
 //|  v1.2 变更 (vs v1.1): 手数序列对齐真机 CENT22                     |
 //|    * MaxOrderCount 12 → 22 (真机数据里曾到 L23, 22 层留一层缓冲)  |
@@ -24,8 +32,8 @@
 //|    - 允许多空共存 (需 Hedging 账户)                               |
 //+------------------------------------------------------------------+
 #property copyright "美分马丁-stable"
-#property version   "1.20"
-#property description "美分马丁-stable v1.2 (手数对齐真机 CENT22, MaxLayers=22)"
+#property version   "1.30"
+#property description "美分马丁-stable v1.3 (信号取已收 bar / 新闻缓存 / 错误码分级 / USD 兜底)"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -33,12 +41,13 @@
 //============ 策略参数 ============
 input group "=== 策略核心 ==="
 input ENUM_TIMEFRAMES SignalTimeFrame = PERIOD_M15;    // 判断方向周期
-input double LossPriceGap    = 2.0;                    // 加仓浮亏阈值(美金)
-input double AvgProfitTarget = 0.6;                    // 平仓浮盈阈值(美金)
-input int    MaxOrderCount   = 22;                     // 每方向最大层数 (v1.2: 12→22 对齐真机)
-input double MultiAfter4     = 1.3;                    // L13+ 加仓倍数 (前 12 层用 fixedLotArr 查表)
-input int    MagicNum        = 8866;
-input int    Slippage        = 10;                     // 允许滑点(points)
+input double LossPriceGap     = 2.0;                   // 加仓阈值: 手数加权平均价差(USD/oz), 非美元浮亏
+input double AvgProfitTarget  = 0.6;                   // 平仓阈值: 手数加权平均价差(USD/oz), 非美元浮盈
+input double Inp_MinUsdProfit = 0.0;                   // 平仓兜底: 净美元浮盈 ≥ 该值才平, 0=不启用
+input int    MaxOrderCount    = 22;                    // 每方向最大层数 (v1.2: 12→22 对齐真机)
+input double MultiAfter4      = 1.3;                   // L13+ 加仓倍数 (前 12 层用 fixedLotArr 查表)
+input int    MagicNum         = 8866;
+input int    Slippage         = 10;                    // 允许滑点(points)
 
 //============ 保护参数 ============
 input group "=== 黑天鹅熔断 ==="
@@ -69,6 +78,16 @@ bool     lastNewsBlocked = false;
 bool     lastSpreadHi    = false;
 datetime lastOpenFailTs  = 0;
 string   panelPfx = "StableP_";
+
+// H2: CalendarValueHistory 结果缓存 60s (避免每 tick 拉外部日历)
+datetime g_newsCacheTs        = 0;
+bool     g_newsCacheBlock     = false;
+string   g_newsCacheName      = "";
+datetime g_newsCacheEventTime = 0;
+
+// C3: 价差达标但 USD 未达标, 等待中 (用于日志节流, 状态变化才 Print)
+bool     g_buyWaitUsd  = false;
+bool     g_sellWaitUsd = false;
 
 // v1.2: L1-L12 直接用真机 CENT22 反推的手数序列 (L2 复用 L1)
 double fixedLotArr[] = {0.01, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09, 0.12, 0.16, 0.21, 0.27};
@@ -122,12 +141,16 @@ int OnInit()
    lastOpenFailTs  = 0;
 
    Print("=============================================");
-   Print("=== 美分马丁-stable v1.2 启动 ===");
+   Print("=== 美分马丁-stable v1.3 启动 ===");
    Print("信号周期=", EnumToString(SignalTimeFrame),
-         "  加仓浮亏=$", LossPriceGap,
-         "  平仓浮盈=$", AvgProfitTarget);
-   Print("L1-L12 查表: [0.01,0.01,0.02,0.03,0.04,0.05,0.07,0.09,0.12,0.16,0.21,0.27]");
-   Print("L13+ 倍率=", MultiAfter4, "  最大层数=", MaxOrderCount,
+         " (取已收 bar[1])",
+         "  加仓价差=$", LossPriceGap, "/oz",
+         "  平仓价差=$", AvgProfitTarget, "/oz",
+         "  USD 兜底=", (Inp_MinUsdProfit>0 ? DoubleToString(Inp_MinUsdProfit,2) : "关"));
+   Print("L1-L", ArraySize(fixedLotArr),
+         " 查表: [0.01,0.01,0.02,0.03,0.04,0.05,0.07,0.09,0.12,0.16,0.21,0.27]");
+   Print("L", ArraySize(fixedLotArr)+1, "+ 倍率=", MultiAfter4,
+         "  最大层数=", MaxOrderCount,
          "  开单失败冷却=", Inp_OpenFailCoolSec, "秒");
    Print("[保护] 黑天鹅=", Inp_BlackSwan ? "开" : "关",
          "(M1>$", Inp_BlackSwanRange, ", 平仓阈值<", Inp_MaxCloseLossPct, "%)");
@@ -164,9 +187,10 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 int GetSignal()
 {
+   // H1: 取已收 M15 bar (shift=1), 避免使用未收 bar[0] 的 MA 每 tick 抖动
    double fast[1], slow[1];
-   if(CopyBuffer(maFastHandle, 0, 0, 1, fast) < 1) return 0;
-   if(CopyBuffer(maSlowHandle, 0, 0, 1, slow) < 1) return 0;
+   if(CopyBuffer(maFastHandle, 0, 1, 1, fast) < 1) return 0;
+   if(CopyBuffer(maSlowHandle, 0, 1, 1, slow) < 1) return 0;
    if(fast[0] > slow[0]) return 1;
    if(fast[0] < slow[0]) return -1;
    return 0;
@@ -311,11 +335,33 @@ bool OpenTrade(int dir, double lots, int layer)
    }
    else
    {
-      // 失败限流: 冷却期内同类错误只打印一次, 避免刷屏 (auto trading disabled 等场景)
+      // M2: 错误码分级
+      uint   rc     = trade.ResultRetcode();
+      string rcDesc = trade.ResultRetcodeDescription();
+
+      // 致命错误 → 立即冻结, 不再刷单 (保证金不足 / 持仓/挂单/成交量到顶)
+      if(rc == TRADE_RETCODE_NO_MONEY ||
+         rc == TRADE_RETCODE_LIMIT_VOLUME ||
+         rc == TRADE_RETCODE_LIMIT_ORDERS ||
+         rc == TRADE_RETCODE_LIMIT_POSITIONS)
+      {
+         Print("[stable] ⛔ 致命错误 rc=", rc, " ", rcDesc,
+               " dir=", dir, " lots=", DoubleToString(lots,2), " → 冻结 EA");
+         Alert(StringFormat("[stable] 致命错误 rc=%u %s, EA 已冻结, 请检查账户", rc, rcDesc));
+         emergencyFrozen = true;
+         return false;
+      }
+
+      // 环境错误 → 走节流, 打印带标签
+      bool envErr = (rc == TRADE_RETCODE_MARKET_CLOSED ||
+                     rc == TRADE_RETCODE_TRADE_DISABLED);
+
+      // 失败限流: 冷却期内同类错误只打印一次, 避免刷屏
       if(TimeCurrent() - lastOpenFailTs >= Inp_OpenFailCoolSec)
       {
-         Print("[stable] ❌ 开单失败 dir=", dir, " lots=", lots,
-               " err=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription(),
+         Print("[stable] ❌ 开单失败 dir=", dir, " lots=", DoubleToString(lots,2),
+               " rc=", rc, " ", rcDesc,
+               envErr ? " (环境问题, 等 broker/终端恢复)" : "",
                " (", Inp_OpenFailCoolSec, "s 内重复失败仅记 1 次)");
          lastOpenFailTs = TimeCurrent();
       }
@@ -410,7 +456,7 @@ bool IsWatchedNewsName(string name)
 }
 
 //+------------------------------------------------------------------+
-//| 判断当前是否处于新闻黑洞窗口                                       |
+//| 判断当前是否处于新闻黑洞窗口 (H2: 结果缓存 60s)                    |
 //+------------------------------------------------------------------+
 bool IsNewsBlackout(string &blockingEvent, int &minutesTo)
 {
@@ -418,12 +464,31 @@ bool IsNewsBlackout(string &blockingEvent, int &minutesTo)
    minutesTo = 0;
    if(!Inp_NewsFilter) return false;
 
-   datetime now  = TimeCurrent();
+   datetime now = TimeCurrent();
+
+   // H2: 缓存命中 (60s 内直接返回上次结果, minutesTo 按当前时间重算)
+   if(g_newsCacheTs > 0 && (now - g_newsCacheTs) < 60)
+   {
+      if(g_newsCacheBlock)
+      {
+         blockingEvent = g_newsCacheName;
+         minutesTo = (int)((g_newsCacheEventTime - now) / 60);
+      }
+      return g_newsCacheBlock;
+   }
+
    datetime from = now - Inp_NewsMinAfter  * 60;
    datetime to   = now + Inp_NewsMinBefore * 60;
 
    MqlCalendarValue values[];
    int n = CalendarValueHistory(values, from, to, "US");
+
+   // 无论有无命中都刷新缓存时间戳
+   g_newsCacheTs        = now;
+   g_newsCacheBlock     = false;
+   g_newsCacheName      = "";
+   g_newsCacheEventTime = 0;
+
    if(n <= 0) return false;
 
    for(int i = 0; i < n; i++)
@@ -432,6 +497,10 @@ bool IsNewsBlackout(string &blockingEvent, int &minutesTo)
       if(!CalendarEventById(values[i].event_id, evt)) continue;
       if(evt.importance != CALENDAR_IMPORTANCE_HIGH) continue;
       if(!IsWatchedNewsName(evt.name)) continue;
+
+      g_newsCacheBlock     = true;
+      g_newsCacheName      = evt.name;
+      g_newsCacheEventTime = values[i].time;
 
       blockingEvent = evt.name;
       minutesTo = (int)((values[i].time - now) / 60);
@@ -481,7 +550,7 @@ void UpdatePanel()
    long   spd     = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    int    spdMax  = Inp_MaxSpread + Inp_SpreadBuffer;
 
-   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.2 ===", clrGold); y += lh + 4;
+   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.3 ===", clrGold); y += lh + 4;
 
    string buyStr = StringFormat("多: L%d/%d  手数:%.2f  浮盈:%.2f",
                                 stat.buyCnt, MaxOrderCount, stat.buyTotalLot, buyP);
@@ -543,22 +612,59 @@ void OnTick()
    PosStat stat;
    GetPositionStat(stat);
 
+   // C3: 价差回落或已无持仓 → 清除 USD 等待标志
+   if(stat.buyCnt  == 0 || stat.buyAvgProfitPrice  < AvgProfitTarget) g_buyWaitUsd  = false;
+   if(stat.sellCnt == 0 || stat.sellAvgProfitPrice < AvgProfitTarget) g_sellWaitUsd = false;
+
    //--- 平仓判定 (不受冻结/新闻影响, 允许自然止盈平仓)
    if(stat.buyCnt > 0 && stat.buyAvgProfitPrice >= AvgProfitTarget)
    {
-      Print("[stable] 触发平多: 均价浮盈=", DoubleToString(stat.buyAvgProfitPrice,3),
-            " ≥ ", AvgProfitTarget, "  多单数=", stat.buyCnt);
-      CloseAllByDir(1);
-      UpdatePanel();
-      return;
+      double buyUsdProfit = CalcProfitByDir(1);
+      // C3: 兜底 - Inp_MinUsdProfit > 0 时, 美元浮盈也必须达标
+      if(Inp_MinUsdProfit > 0.0 && buyUsdProfit < Inp_MinUsdProfit)
+      {
+         if(!g_buyWaitUsd)
+         {
+            Print("[stable] 平多价差达标(", DoubleToString(stat.buyAvgProfitPrice,3),
+                  "≥", AvgProfitTarget, ") 但 USD 浮盈=", DoubleToString(buyUsdProfit,2),
+                  " < ", Inp_MinUsdProfit, " → 等待");
+            g_buyWaitUsd = true;
+         }
+      }
+      else
+      {
+         Print("[stable] 触发平多: 均价差=", DoubleToString(stat.buyAvgProfitPrice,3),
+               " ≥ ", AvgProfitTarget, "  USD 浮盈=", DoubleToString(buyUsdProfit,2),
+               "  多单数=", stat.buyCnt);
+         CloseAllByDir(1);
+         g_buyWaitUsd = false;
+         UpdatePanel();
+         return;
+      }
    }
    if(stat.sellCnt > 0 && stat.sellAvgProfitPrice >= AvgProfitTarget)
    {
-      Print("[stable] 触发平空: 均价浮盈=", DoubleToString(stat.sellAvgProfitPrice,3),
-            " ≥ ", AvgProfitTarget, "  空单数=", stat.sellCnt);
-      CloseAllByDir(-1);
-      UpdatePanel();
-      return;
+      double sellUsdProfit = CalcProfitByDir(-1);
+      if(Inp_MinUsdProfit > 0.0 && sellUsdProfit < Inp_MinUsdProfit)
+      {
+         if(!g_sellWaitUsd)
+         {
+            Print("[stable] 平空价差达标(", DoubleToString(stat.sellAvgProfitPrice,3),
+                  "≥", AvgProfitTarget, ") 但 USD 浮盈=", DoubleToString(sellUsdProfit,2),
+                  " < ", Inp_MinUsdProfit, " → 等待");
+            g_sellWaitUsd = true;
+         }
+      }
+      else
+      {
+         Print("[stable] 触发平空: 均价差=", DoubleToString(stat.sellAvgProfitPrice,3),
+               " ≥ ", AvgProfitTarget, "  USD 浮盈=", DoubleToString(sellUsdProfit,2),
+               "  空单数=", stat.sellCnt);
+         CloseAllByDir(-1);
+         g_sellWaitUsd = false;
+         UpdatePanel();
+         return;
+      }
    }
 
    //--- 开新仓前的保护门 (冻结/点差/新闻)
@@ -621,14 +727,17 @@ void OnTick()
       return;
    }
 
+   // C1: 手数表长度 (替代硬编码 12, 后续扩数组不用改分界)
+   int lotArrSz = ArraySize(fixedLotArr);
+
    //--- 多单方向
    if(sig == 1 && stat.buyCnt < MaxOrderCount)
    {
       if(stat.buyCnt > 0 && stat.buyAvgProfitPrice <= -LossPriceGap)
       {
          double nextLot;
-         if(stat.buyCnt < 12) nextLot = fixedLotArr[stat.buyCnt];
-         else                 nextLot = GetLastLotByDir(1) * MultiAfter4;
+         if(stat.buyCnt < lotArrSz) nextLot = fixedLotArr[stat.buyCnt];
+         else                       nextLot = GetLastLotByDir(1) * MultiAfter4;
          if(Inp_VerboseLog)
             Print("[stable] 触发加多 L", stat.buyCnt+1,
                   ": 均价浮亏=", DoubleToString(stat.buyAvgProfitPrice,3),
@@ -648,8 +757,8 @@ void OnTick()
       if(stat.sellCnt > 0 && stat.sellAvgProfitPrice <= -LossPriceGap)
       {
          double nextLot;
-         if(stat.sellCnt < 12) nextLot = fixedLotArr[stat.sellCnt];
-         else                  nextLot = GetLastLotByDir(-1) * MultiAfter4;
+         if(stat.sellCnt < lotArrSz) nextLot = fixedLotArr[stat.sellCnt];
+         else                        nextLot = GetLastLotByDir(-1) * MultiAfter4;
          if(Inp_VerboseLog)
             Print("[stable] 触发加空 L", stat.sellCnt+1,
                   ": 均价浮亏=", DoubleToString(stat.sellAvgProfitPrice,3),
