@@ -1,6 +1,15 @@
 //+------------------------------------------------------------------+
 //|                                              美分马丁-stable.mq5 |
-//|                                                      Version 1.3 |
+//|                                                      Version 1.4 |
+//|                                                                  |
+//|  v1.4 变更 (vs v1.3): **加仓触发逻辑改动** (对齐真机数据)          |
+//|    * 加仓判断: '累计手数加权均价浮亏' → '最新一单浮亏'             |
+//|      - 原策略每层间距递减 ($2→$1→$0.86→...→$0.46)                 |
+//|      - 新策略每层间距恒定 = LossPriceGap 参数值                    |
+//|      - 与真机 DetailedStatement.htm 反推 (每层 ~$2.5) 一致        |
+//|    * 新增 GetLastOpenPriceByDir() 取该方向最新一单开仓价           |
+//|    * LossPriceGap 默认值仍为 2.0 (不改); 实盘运行时改成 2.5        |
+//|    * 平仓逻辑保持不变 (仍用累计均价浮盈 >= AvgProfitTarget)        |
 //|                                                                  |
 //|  v1.3 变更 (vs v1.2):                                             |
 //|    * [C1] fixedLotArr 分界由硬编码 12 改为 ArraySize()             |
@@ -32,8 +41,8 @@
 //|    - 允许多空共存 (需 Hedging 账户)                               |
 //+------------------------------------------------------------------+
 #property copyright "美分马丁-stable"
-#property version   "1.30"
-#property description "美分马丁-stable v1.3 (信号取已收 bar / 新闻缓存 / 错误码分级 / USD 兜底)"
+#property version   "1.40"
+#property description "美分马丁-stable v1.4 (加仓改'最新单浮亏'触发, 层间距恒定, 对齐真机)"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -141,10 +150,10 @@ int OnInit()
    lastOpenFailTs  = 0;
 
    Print("=============================================");
-   Print("=== 美分马丁-stable v1.3 启动 ===");
+   Print("=== 美分马丁-stable v1.4 启动 ===");
    Print("信号周期=", EnumToString(SignalTimeFrame),
          " (取已收 bar[1])",
-         "  加仓价差=$", LossPriceGap, "/oz",
+         "  加仓触发=最新单浮亏≥$", LossPriceGap, "/oz (层间距恒定)",
          "  平仓价差=$", AvgProfitTarget, "/oz",
          "  USD 兜底=", (Inp_MinUsdProfit>0 ? DoubleToString(Inp_MinUsdProfit,2) : "关"));
    Print("L1-L", ArraySize(fixedLotArr),
@@ -297,6 +306,32 @@ double GetLastLotByDir(int dir)
       }
    }
    return lastLot;
+}
+
+//+------------------------------------------------------------------+
+// v1.4: 获取该方向"最新一单"的开仓价 (用于'距上一单浮亏'触发加仓, 保证层间距恒定)
+double GetLastOpenPriceByDir(int dir)
+{
+   double   lastPrice = 0;
+   datetime lastTime  = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != MagicNum) continue;
+      long ptype = PositionGetInteger(POSITION_TYPE);
+      if(dir ==  1 && ptype != POSITION_TYPE_BUY)  continue;
+      if(dir == -1 && ptype != POSITION_TYPE_SELL) continue;
+
+      datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+      if(openTime > lastTime)
+      {
+         lastTime  = openTime;
+         lastPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      }
+   }
+   return lastPrice;
 }
 
 //+------------------------------------------------------------------+
@@ -550,7 +585,7 @@ void UpdatePanel()
    long   spd     = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    int    spdMax  = Inp_MaxSpread + Inp_SpreadBuffer;
 
-   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.3 ===", clrGold); y += lh + 4;
+   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.4 ===", clrGold); y += lh + 4;
 
    string buyStr = StringFormat("多: L%d/%d  手数:%.2f  浮盈:%.2f",
                                 stat.buyCnt, MaxOrderCount, stat.buyTotalLot, buyP);
@@ -730,20 +765,28 @@ void OnTick()
    // C1: 手数表长度 (替代硬编码 12, 后续扩数组不用改分界)
    int lotArrSz = ArraySize(fixedLotArr);
 
-   //--- 多单方向
+   //--- 多单方向 (v1.4: 加仓触发改为"最新单浮亏 >= LossPriceGap", 保证层间距恒定)
    if(sig == 1 && stat.buyCnt < MaxOrderCount)
    {
-      if(stat.buyCnt > 0 && stat.buyAvgProfitPrice <= -LossPriceGap)
+      if(stat.buyCnt > 0)
       {
-         double nextLot;
-         if(stat.buyCnt < lotArrSz) nextLot = fixedLotArr[stat.buyCnt];
-         else                       nextLot = GetLastLotByDir(1) * MultiAfter4;
-         if(Inp_VerboseLog)
-            Print("[stable] 触发加多 L", stat.buyCnt+1,
-                  ": 均价浮亏=", DoubleToString(stat.buyAvgProfitPrice,3),
-                  " ≤ -", LossPriceGap,
-                  "  下一单=", DoubleToString(NormalizeLot(nextLot),2));
-         OpenTrade(1, nextLot, stat.buyCnt+1);
+         double lastOpen  = GetLastOpenPriceByDir(1);
+         double curBid    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double lastLoss  = lastOpen - curBid;   // buy: 最新单浮亏 (>0 表示亏)
+         if(lastOpen > 0 && lastLoss >= LossPriceGap)
+         {
+            double nextLot;
+            if(stat.buyCnt < lotArrSz) nextLot = fixedLotArr[stat.buyCnt];
+            else                       nextLot = GetLastLotByDir(1) * MultiAfter4;
+            if(Inp_VerboseLog)
+               Print("[stable] 触发加多 L", stat.buyCnt+1,
+                     ": 最新单浮亏=", DoubleToString(lastLoss,3),
+                     " ≥ ", LossPriceGap,
+                     " (lastOpen=", DoubleToString(lastOpen,2),
+                     " bid=", DoubleToString(curBid,2),
+                     ")  下一单=", DoubleToString(NormalizeLot(nextLot),2));
+            OpenTrade(1, nextLot, stat.buyCnt+1);
+         }
       }
       else if(stat.buyCnt == 0)
       {
@@ -751,20 +794,28 @@ void OnTick()
       }
    }
 
-   //--- 空单方向
+   //--- 空单方向 (v1.4: 加仓触发改为"最新单浮亏 >= LossPriceGap", 保证层间距恒定)
    if(sig == -1 && stat.sellCnt < MaxOrderCount)
    {
-      if(stat.sellCnt > 0 && stat.sellAvgProfitPrice <= -LossPriceGap)
+      if(stat.sellCnt > 0)
       {
-         double nextLot;
-         if(stat.sellCnt < lotArrSz) nextLot = fixedLotArr[stat.sellCnt];
-         else                        nextLot = GetLastLotByDir(-1) * MultiAfter4;
-         if(Inp_VerboseLog)
-            Print("[stable] 触发加空 L", stat.sellCnt+1,
-                  ": 均价浮亏=", DoubleToString(stat.sellAvgProfitPrice,3),
-                  " ≤ -", LossPriceGap,
-                  "  下一单=", DoubleToString(NormalizeLot(nextLot),2));
-         OpenTrade(-1, nextLot, stat.sellCnt+1);
+         double lastOpen  = GetLastOpenPriceByDir(-1);
+         double curAsk    = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double lastLoss  = curAsk - lastOpen;   // sell: 最新单浮亏 (>0 表示亏)
+         if(lastOpen > 0 && lastLoss >= LossPriceGap)
+         {
+            double nextLot;
+            if(stat.sellCnt < lotArrSz) nextLot = fixedLotArr[stat.sellCnt];
+            else                        nextLot = GetLastLotByDir(-1) * MultiAfter4;
+            if(Inp_VerboseLog)
+               Print("[stable] 触发加空 L", stat.sellCnt+1,
+                     ": 最新单浮亏=", DoubleToString(lastLoss,3),
+                     " ≥ ", LossPriceGap,
+                     " (lastOpen=", DoubleToString(lastOpen,2),
+                     " ask=", DoubleToString(curAsk,2),
+                     ")  下一单=", DoubleToString(NormalizeLot(nextLot),2));
+            OpenTrade(-1, nextLot, stat.sellCnt+1);
+         }
       }
       else if(stat.sellCnt == 0)
       {
