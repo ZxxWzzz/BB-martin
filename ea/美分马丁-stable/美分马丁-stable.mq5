@@ -140,7 +140,7 @@ int OnInit()
    long marginMode = AccountInfoInteger(ACCOUNT_MARGIN_MODE);
    if(marginMode != ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
    {
-      Print("[stable] ❌ 账户不是 Hedging 模式 (当前=", marginMode,
+      Print("[stable] [X] 账户不是 Hedging 模式 (当前=", marginMode,
             "), 多空共存无法工作, EA 停止");
       return INIT_FAILED;
    }
@@ -149,7 +149,7 @@ int OnInit()
    maSlowHandle = iMA(_Symbol, SignalTimeFrame, 50, 0, MODE_SMA, PRICE_CLOSE);
    if(maFastHandle == INVALID_HANDLE || maSlowHandle == INVALID_HANDLE)
    {
-      Print("[stable] ❌ MA 句柄创建失败");
+      Print("[stable] [X] MA 句柄创建失败");
       return INIT_FAILED;
    }
 
@@ -183,7 +183,7 @@ int OnInit()
    Print("[保护] 点差过滤: >", Inp_MaxSpread + Inp_SpreadBuffer, " pt 禁开");
    Print("[保护] 新闻过滤=", Inp_NewsFilter ? "开" : "关",
          "  前", Inp_NewsMinBefore, "min / 后", Inp_NewsMinAfter, "min");
-   Print("Magic=", MagicNum, "  账户模式=Hedging ✅");
+   Print("Magic=", MagicNum, "  账户模式=Hedging [OK]");
 
    // 首次尝试读日历,验证 Calendar API 是否可用
    if(Inp_NewsFilter)
@@ -191,7 +191,7 @@ int OnInit()
       MqlCalendarValue tmp[];
       int n = CalendarValueHistory(tmp, TimeCurrent(), TimeCurrent() + 7*86400, "US");
       if(n < 0)
-         Print("[stable] ⚠ Calendar API 读取失败 err=", GetLastError(),
+         Print("[stable] [!] Calendar API 读取失败 err=", GetLastError(),
                ", 新闻过滤将不生效 (可能是 broker 服务器不共享日历)");
       else
          Print("[stable] Calendar API OK, 未来 7 天美国事件数=", n);
@@ -378,7 +378,7 @@ bool OpenTrade(int dir, double lots, int layer)
                         : trade.Sell(lots, _Symbol, price, 0, 0, cmt);
    if(ok)
    {
-      Print("[stable] ▶ 开", dir==1?"多":"空",
+      Print("[stable] >> 开", dir==1?"多":"空",
             " L", layer,
             "  Lots=", DoubleToString(lots,2),
             "  Price=", DoubleToString(price,2),
@@ -397,7 +397,7 @@ bool OpenTrade(int dir, double lots, int layer)
          rc == TRADE_RETCODE_LIMIT_ORDERS ||
          rc == TRADE_RETCODE_LIMIT_POSITIONS)
       {
-         Print("[stable] ⛔ 致命错误 rc=", rc, " ", rcDesc,
+         Print("[stable] [FATAL] 致命错误 rc=", rc, " ", rcDesc,
                " dir=", dir, " lots=", DoubleToString(lots,2), " → 冻结 EA");
          Alert(StringFormat("[stable] 致命错误 rc=%u %s, EA 已冻结, 请检查账户", rc, rcDesc));
          emergencyFrozen = true;
@@ -411,7 +411,7 @@ bool OpenTrade(int dir, double lots, int layer)
       // 失败限流: 冷却期内同类错误只打印一次, 避免刷屏
       if(TimeCurrent() - lastOpenFailTs >= Inp_OpenFailCoolSec)
       {
-         Print("[stable] ❌ 开单失败 dir=", dir, " lots=", DoubleToString(lots,2),
+         Print("[stable] [X] 开单失败 dir=", dir, " lots=", DoubleToString(lots,2),
                " rc=", rc, " ", rcDesc,
                envErr ? " (环境问题, 等 broker/终端恢复)" : "",
                " (", Inp_OpenFailCoolSec, "s 内重复失败仅记 1 次)");
@@ -441,7 +441,7 @@ void CloseAllByDir(int dir)
                  " err=", trade.ResultRetcode());
    }
    if(closed > 0)
-      Print("[stable] ◀ 平", dir==1?"多":"空", " ×", closed,
+      Print("[stable] << 平", dir==1?"多":"空", " ×", closed,
             "  该方向浮盈=", DoubleToString(profitBefore,2));
 }
 
@@ -478,20 +478,20 @@ void CheckBlackSwan()
    {
       // 深套: 保留持仓 + 冻结 + 手机推送
       emergencyFrozen = true;
-      Print("[stable-BLACKSWAN] 🔒 ", common, " ≥ L", Inp_BlackSwanLayerCap,
+      Print("[stable-BLACKSWAN] [LOCK] ", common, " ≥ L", Inp_BlackSwanLayerCap,
             " → 保留持仓 + 冻结 (需重启 EA 解锁)");
-      Alert(StringFormat("[stable] 🔒黑天鹅深套 L%d 保留仓+冻结 %s", maxLayer, common));
-      SendNotification(StringFormat("[stable] 🔒黑天鹅深套 L%d 需人工干预 %s",
+      Alert(StringFormat("[stable] [LOCK]黑天鹅深套 L%d 保留仓+冻结 %s", maxLayer, common));
+      SendNotification(StringFormat("[stable] [LOCK]黑天鹅深套 L%d 需人工干预 %s",
                                      maxLayer, common));
    }
    else
    {
       // 浅套: 全平止损 + 暂停 X 分钟, 暂停期后自动恢复 (不冻结)
-      Print("[stable-BLACKSWAN] ✂ ", common, " < L", Inp_BlackSwanLayerCap,
+      Print("[stable-BLACKSWAN] [CUT] ", common, " < L", Inp_BlackSwanLayerCap,
             " → 全平止损 + 暂停 ", Inp_BlackSwanPauseMin, " 分钟");
-      Alert(StringFormat("[stable] ✂黑天鹅止损 L%d 全平+暂停%dmin %s",
+      Alert(StringFormat("[stable] [CUT]黑天鹅止损 L%d 全平+暂停%dmin %s",
                          maxLayer, Inp_BlackSwanPauseMin, common));
-      SendNotification(StringFormat("[stable] ✂黑天鹅止损 L%d 全平+暂停%dmin %s",
+      SendNotification(StringFormat("[stable] [CUT]黑天鹅止损 L%d 全平+暂停%dmin %s",
                                      maxLayer, Inp_BlackSwanPauseMin, common));
       CloseAllByDir(1);
       CloseAllByDir(-1);
@@ -642,13 +642,13 @@ void UpdatePanel()
 
    if(emergencyFrozen)
    {
-      status = "❗黑天鹅冻结 (需重启 EA)";
+      status = "[!]黑天鹅冻结 (需重启 EA)";
       stCol = clrRed;
    }
    else if(pauseOpenUntil > 0 && TimeCurrent() < pauseOpenUntil)
    {
       int remainMin = (int)((pauseOpenUntil - TimeCurrent()) / 60) + 1;
-      status = StringFormat("🕒 黑天鹅暂停 剩 %d 分钟", remainMin);
+      status = StringFormat("[PAUSE] 黑天鹅暂停 剩 %d 分钟", remainMin);
       stCol = clrOrange;
    }
    else
@@ -657,14 +657,14 @@ void UpdatePanel()
       if(IsNewsBlackout(newsName, newsMin))
       {
          if(newsMin >= 0)
-            status = StringFormat("⚠新闻窗口: %s (还剩 %d 分钟)", newsName, newsMin);
+            status = StringFormat("[!]新闻窗口: %s (还剩 %d 分钟)", newsName, newsMin);
          else
-            status = StringFormat("⚠新闻窗口: %s (已过 %d 分钟)", newsName, -newsMin);
+            status = StringFormat("[!]新闻窗口: %s (已过 %d 分钟)", newsName, -newsMin);
          stCol = clrOrange;
       }
       else if(spd > spdMax)
       {
-         status = "⚠ 点差过大, 禁开新仓";
+         status = "[!] 点差过大, 禁开新仓";
          stCol = clrOrange;
       }
    }
@@ -751,7 +751,7 @@ void OnTick()
       if(!lastPauseNoted && Inp_VerboseLog)
       {
          int remainMin = (int)((pauseOpenUntil - TimeCurrent()) / 60);
-         Print("[stable] 🕒 黑天鹅暂停中, 剩 ", remainMin, " 分钟, 禁开新仓");
+         Print("[stable] [PAUSE] 黑天鹅暂停中, 剩 ", remainMin, " 分钟, 禁开新仓");
          lastPauseNoted = true;
       }
       UpdatePanel();
@@ -759,7 +759,7 @@ void OnTick()
    }
    else if(pauseOpenUntil > 0 && TimeCurrent() >= pauseOpenUntil)
    {
-      Print("[stable] ✓ 黑天鹅暂停结束, 恢复开仓");
+      Print("[stable] [OK] 黑天鹅暂停结束, 恢复开仓");
       pauseOpenUntil = 0;
       lastPauseNoted = false;
    }
@@ -771,7 +771,7 @@ void OnTick()
       if(!lastSpreadHi && Inp_VerboseLog)
       {
          long spd = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-         Print("[stable] ⚠ 点差过大 ", spd, " > ", Inp_MaxSpread + Inp_SpreadBuffer,
+         Print("[stable] [!] 点差过大 ", spd, " > ", Inp_MaxSpread + Inp_SpreadBuffer,
                " → 禁开新仓");
          lastSpreadHi = true;
       }
@@ -780,7 +780,7 @@ void OnTick()
    }
    else if(lastSpreadHi)
    {
-      Print("[stable] ✓ 点差恢复正常");
+      Print("[stable] [OK] 点差恢复正常");
       lastSpreadHi = false;
    }
 
@@ -791,7 +791,7 @@ void OnTick()
    {
       if(!lastNewsBlocked && Inp_VerboseLog)
       {
-         Print("[stable] ⚠ 新闻窗口: ", newsName, " (", newsMin, " 分钟) → 禁开新仓");
+         Print("[stable] [!] 新闻窗口: ", newsName, " (", newsMin, " 分钟) → 禁开新仓");
          lastNewsBlocked = true;
       }
       UpdatePanel();
@@ -799,7 +799,7 @@ void OnTick()
    }
    else if(lastNewsBlocked)
    {
-      Print("[stable] ✓ 新闻窗口结束, 恢复开仓");
+      Print("[stable] [OK] 新闻窗口结束, 恢复开仓");
       lastNewsBlocked = false;
    }
 

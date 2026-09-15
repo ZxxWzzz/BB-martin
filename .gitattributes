@@ -1,0 +1,11 @@
+# 保护 .mq5 文件的 UTF-8 BOM 和换行, 避免 git 自动转换搞坏 MetaEditor 显示
+*.mq5 -text
+
+# .bat 必须是 CRLF (Windows 命令解释器要求)
+*.bat text eol=crlf
+
+# .ps1 保持 CRLF (Windows PowerShell)
+*.ps1 text eol=crlf
+
+# Markdown 默认 LF
+*.md text eol=lf
