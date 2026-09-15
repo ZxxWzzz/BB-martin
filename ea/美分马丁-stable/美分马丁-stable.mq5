@@ -1,6 +1,16 @@
-//+------------------------------------------------------------------+
+﻿//+------------------------------------------------------------------+
 //|                                              美分马丁-stable.mq5 |
-//|                                                      Version 1.4 |
+//|                                                      Version 1.5 |
+//|                                                                  |
+//|  v1.5 变更 (vs v1.4): 黑天鹅按层数分档 + 30 分钟暂停                |
+//|    * 新参数 Inp_BlackSwanLayerCap (默认 16)                        |
+//|      - 触发时 max(buyCnt,sellCnt) < 16: 全平止损 + 暂停 30 分钟    |
+//|      - 触发时 max(buyCnt,sellCnt) >= 16: 只冻结 + 手机推送告警     |
+//|    * 新参数 Inp_BlackSwanPauseMin (默认 30) 全平后禁开新仓时长      |
+//|    * 移除 Inp_MaxCloseLossPct (用途被 LayerCap 替代)               |
+//|    * 全平分支后 emergencyFrozen 保持 false, 让暂停期过后自动恢复    |
+//|    * 深套分支通过 SendNotification 推送手机(需先配 MetaQuotes ID)  |
+//|    * OnTick 加暂停期检查 + 面板 HUD 显示暂停剩余时间               |
 //|                                                                  |
 //|  v1.4 变更 (vs v1.3): **加仓触发逻辑改动** (对齐真机数据)          |
 //|    * 加仓判断: '累计手数加权均价浮亏' → '最新一单浮亏'             |
@@ -41,8 +51,8 @@
 //|    - 允许多空共存 (需 Hedging 账户)                               |
 //+------------------------------------------------------------------+
 #property copyright "美分马丁-stable"
-#property version   "1.40"
-#property description "美分马丁-stable v1.4 (加仓改'最新单浮亏'触发, 层间距恒定, 对齐真机)"
+#property version   "1.50"
+#property description "美分马丁-stable v1.5 (黑天鹅按层分档: L<16 全平暂停 30min, L>=16 冻结告警)"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -60,9 +70,10 @@ input int    Slippage         = 10;                    // 允许滑点(points)
 
 //============ 保护参数 ============
 input group "=== 黑天鹅熔断 ==="
-input bool   Inp_BlackSwan      = true;                // 启用黑天鹅熔断
-input double Inp_BlackSwanRange = 20.0;                // M1 波动>=$X 触发
-input double Inp_MaxCloseLossPct= 25.0;                // 浮亏率<X%才敢强平
+input bool   Inp_BlackSwan          = true;            // 启用黑天鹅熔断
+input double Inp_BlackSwanRange     = 20.0;            // M1 波动>=$X 触发
+input int    Inp_BlackSwanLayerCap  = 16;              // 触发时该方向层数 >= X → 只冻结告警, < X → 全平+暂停
+input int    Inp_BlackSwanPauseMin  = 30;              // 全平后禁开新仓 X 分钟
 
 input group "=== 点差保护 ==="
 input int    Inp_MaxSpread      = 60;                  // 点差>X 禁开新仓
@@ -86,6 +97,8 @@ bool     emergencyFrozen = false;
 bool     lastNewsBlocked = false;
 bool     lastSpreadHi    = false;
 datetime lastOpenFailTs  = 0;
+datetime pauseOpenUntil  = 0;                          // v1.5: 黑天鹅浅套后禁开新仓的截止时间
+bool     lastPauseNoted  = false;                      // v1.5: 暂停日志节流
 string   panelPfx = "StableP_";
 
 // H2: CalendarValueHistory 结果缓存 60s (避免每 tick 拉外部日历)
@@ -147,10 +160,12 @@ int OnInit()
    emergencyFrozen = false;
    lastNewsBlocked = false;
    lastSpreadHi    = false;
+   pauseOpenUntil  = 0;
+   lastPauseNoted  = false;
    lastOpenFailTs  = 0;
 
    Print("=============================================");
-   Print("=== 美分马丁-stable v1.4 启动 ===");
+   Print("=== 美分马丁-stable v1.5 启动 ===");
    Print("信号周期=", EnumToString(SignalTimeFrame),
          " (取已收 bar[1])",
          "  加仓触发=最新单浮亏≥$", LossPriceGap, "/oz (层间距恒定)",
@@ -162,7 +177,9 @@ int OnInit()
          "  最大层数=", MaxOrderCount,
          "  开单失败冷却=", Inp_OpenFailCoolSec, "秒");
    Print("[保护] 黑天鹅=", Inp_BlackSwan ? "开" : "关",
-         "(M1>$", Inp_BlackSwanRange, ", 平仓阈值<", Inp_MaxCloseLossPct, "%)");
+         " (M1>$", Inp_BlackSwanRange,
+         ", 层<", Inp_BlackSwanLayerCap, " 全平+暂停", Inp_BlackSwanPauseMin,
+         "min, 层≥", Inp_BlackSwanLayerCap, " 冻结告警)");
    Print("[保护] 点差过滤: >", Inp_MaxSpread + Inp_SpreadBuffer, " pt 禁开");
    Print("[保护] 新闻过滤=", Inp_NewsFilter ? "开" : "关",
          "  前", Inp_NewsMinBefore, "min / 后", Inp_NewsMinAfter, "min");
@@ -429,11 +446,15 @@ void CloseAllByDir(int dir)
 }
 
 //+------------------------------------------------------------------+
-//| 黑天鹅熔断: M1 波动 >= 阈值触发, 视浮亏率决定平/不平              |
+//| 黑天鹅熔断 (v1.5): M1 波动>=阈值触发, 按层数分档                  |
+//|   max(buyCnt,sellCnt) < LayerCap: 全平止损 + 暂停开新仓 X 分钟   |
+//|   max(buyCnt,sellCnt) >= LayerCap: 只冻结 + 手机推送告警        |
 //+------------------------------------------------------------------+
 void CheckBlackSwan()
 {
    if(!Inp_BlackSwan || emergencyFrozen) return;
+   // 已处于暂停期时不重复触发 (避免暂停期内再撞一次)
+   if(TimeCurrent() < pauseOpenUntil) return;
 
    double high = iHigh(_Symbol, PERIOD_M1, 1);
    double low  = iLow(_Symbol, PERIOD_M1, 1);
@@ -441,32 +462,41 @@ void CheckBlackSwan()
    double range = high - low;
    if(range < Inp_BlackSwanRange) return;
 
-   // 触发
-   emergencyFrozen = true;
+   PosStat stat;
+   GetPositionStat(stat);
+   int maxLayer = MathMax(stat.buyCnt, stat.sellCnt);
+
    double totalProfit = CalcTotalProfit();
    double floatLoss   = (totalProfit < 0) ? -totalProfit : 0;
    double balance     = AccountInfoDouble(ACCOUNT_BALANCE);
-   double lossPct     = (balance > 0) ? (floatLoss / balance * 100.0) : 0;
+   double lossPct     = (balance > 0 && floatLoss > 0) ? (floatLoss / balance * 100.0) : 0;
 
-   string msg1 = StringFormat("[stable-BLACKSWAN] M1 波动=$%.2f ≥ $%.2f | 浮亏=%.2f USC (%.2f%% of 余额 %.2f)",
-                              range, Inp_BlackSwanRange, floatLoss, lossPct, balance);
-   Print(msg1);
+   string common = StringFormat("M1$%.2f 层数=%d(多%d/空%d) 浮亏=%.2f USC (%.2f%%)",
+                                range, maxLayer, stat.buyCnt, stat.sellCnt, floatLoss, lossPct);
 
-   if(lossPct < Inp_MaxCloseLossPct)
+   if(maxLayer >= Inp_BlackSwanLayerCap)
    {
-      Print("[stable-BLACKSWAN] ✂ 浮亏率 ", DoubleToString(lossPct,2),
-            "% < ", Inp_MaxCloseLossPct, "% → 全平止损 + 冻结");
-      Alert(StringFormat("[stable] 黑天鹅! M1=$%.2f, 全平离场 (浮亏 %.2f%% < 阈值)",
-                         range, lossPct));
-      CloseAllByDir(1);
-      CloseAllByDir(-1);
+      // 深套: 保留持仓 + 冻结 + 手机推送
+      emergencyFrozen = true;
+      Print("[stable-BLACKSWAN] 🔒 ", common, " ≥ L", Inp_BlackSwanLayerCap,
+            " → 保留持仓 + 冻结 (需重启 EA 解锁)");
+      Alert(StringFormat("[stable] 🔒黑天鹅深套 L%d 保留仓+冻结 %s", maxLayer, common));
+      SendNotification(StringFormat("[stable] 🔒黑天鹅深套 L%d 需人工干预 %s",
+                                     maxLayer, common));
    }
    else
    {
-      Print("[stable-BLACKSWAN] 🔒 浮亏率 ", DoubleToString(lossPct,2),
-            "% ≥ ", Inp_MaxCloseLossPct, "% → 保留持仓, 只冻结禁开新仓");
-      Alert(StringFormat("[stable] 黑天鹅! M1=$%.2f, 但浮亏 %.2f%% 过大, 保留持仓, 禁加仓",
-                         range, lossPct));
+      // 浅套: 全平止损 + 暂停 X 分钟, 暂停期后自动恢复 (不冻结)
+      Print("[stable-BLACKSWAN] ✂ ", common, " < L", Inp_BlackSwanLayerCap,
+            " → 全平止损 + 暂停 ", Inp_BlackSwanPauseMin, " 分钟");
+      Alert(StringFormat("[stable] ✂黑天鹅止损 L%d 全平+暂停%dmin %s",
+                         maxLayer, Inp_BlackSwanPauseMin, common));
+      SendNotification(StringFormat("[stable] ✂黑天鹅止损 L%d 全平+暂停%dmin %s",
+                                     maxLayer, Inp_BlackSwanPauseMin, common));
+      CloseAllByDir(1);
+      CloseAllByDir(-1);
+      pauseOpenUntil = TimeCurrent() + Inp_BlackSwanPauseMin * 60;
+      lastPauseNoted = false;   // 让 OnTick 里能打印进入暂停的一次日志
    }
 }
 
@@ -585,7 +615,7 @@ void UpdatePanel()
    long   spd     = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    int    spdMax  = Inp_MaxSpread + Inp_SpreadBuffer;
 
-   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.4 ===", clrGold); y += lh + 4;
+   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.5 ===", clrGold); y += lh + 4;
 
    string buyStr = StringFormat("多: L%d/%d  手数:%.2f  浮盈:%.2f",
                                 stat.buyCnt, MaxOrderCount, stat.buyTotalLot, buyP);
@@ -606,7 +636,7 @@ void UpdatePanel()
              StringFormat("点差:%d pt (阈值≤%d)", (int)spd, spdMax),
              spd>spdMax ? clrRed : clrWhite); y += lh;
 
-   // 状态行
+   // 状态行 (优先级: 冻结 > 暂停 > 新闻 > 点差 > 正常)
    string status = "运行中";
    color  stCol  = clrLime;
 
@@ -614,6 +644,12 @@ void UpdatePanel()
    {
       status = "❗黑天鹅冻结 (需重启 EA)";
       stCol = clrRed;
+   }
+   else if(pauseOpenUntil > 0 && TimeCurrent() < pauseOpenUntil)
+   {
+      int remainMin = (int)((pauseOpenUntil - TimeCurrent()) / 60) + 1;
+      status = StringFormat("🕒 黑天鹅暂停 剩 %d 分钟", remainMin);
+      stCol = clrOrange;
    }
    else
    {
@@ -702,11 +738,30 @@ void OnTick()
       }
    }
 
-   //--- 开新仓前的保护门 (冻结/点差/新闻)
+   //--- 开新仓前的保护门 (冻结/暂停/点差/新闻)
    if(emergencyFrozen)
    {
       UpdatePanel();
       return;
+   }
+
+   // v1.5: 黑天鹅浅套后暂停期, 期间禁开新仓 (自然止盈平仓仍生效)
+   if(pauseOpenUntil > 0 && TimeCurrent() < pauseOpenUntil)
+   {
+      if(!lastPauseNoted && Inp_VerboseLog)
+      {
+         int remainMin = (int)((pauseOpenUntil - TimeCurrent()) / 60);
+         Print("[stable] 🕒 黑天鹅暂停中, 剩 ", remainMin, " 分钟, 禁开新仓");
+         lastPauseNoted = true;
+      }
+      UpdatePanel();
+      return;
+   }
+   else if(pauseOpenUntil > 0 && TimeCurrent() >= pauseOpenUntil)
+   {
+      Print("[stable] ✓ 黑天鹅暂停结束, 恢复开仓");
+      pauseOpenUntil = 0;
+      lastPauseNoted = false;
    }
 
    // 点差
