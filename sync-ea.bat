@@ -1,4 +1,4 @@
 @echo off
 chcp 65001 >nul
-title 美分马丁-stable EA 同步
+title Stable EA Sync
 powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0sync-ea.ps1"

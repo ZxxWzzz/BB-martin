@@ -1,4 +1,4 @@
-# 美分马丁-stable EA 一键同步脚本
+﻿# 美分马丁-stable EA 一键同步脚本
 # 从 git 仓库 pull -> 对比 hash -> 有差异才替换到 MT5 数据目录
 # 目标 MT5: C:\Program Files\MetaTrader 5
 
