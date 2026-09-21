@@ -1,6 +1,14 @@
 ﻿//+------------------------------------------------------------------+
 //|                                              美分马丁-stable.mq5 |
-//|                                                      Version 1.5 |
+//|                                                      Version 1.6 |
+//|                                                                  |
+//|  v1.6 变更 (vs v1.5): 最大层数强平 + M1 图表校验                    |
+//|    * 新参数 Inp_MaxLayerClose (默认 true)                          |
+//|      - 达到 MaxOrderCount 那一刻立即 CloseAllByDir + 暂停开仓      |
+//|      - 主动认亏 (~$101, L22 触发瞬间) 换掉被动爆仓 (~$290)          |
+//|      - 09-16 爆仓根因就是"L22 后价格继续走 $11 stop-out 强平"      |
+//|    * OnInit 首步校验 Period()=PERIOD_M1, 非 M1 直接 INIT_FAILED    |
+//|      理由: 加仓 tick 敏感, 且防止误挂多图表造成同 magic 双实例冲突 |
 //|                                                                  |
 //|  v1.5 变更 (vs v1.4): 黑天鹅按层数分档 + 30 分钟暂停                |
 //|    * 新参数 Inp_BlackSwanLayerCap (默认 16)                        |
@@ -51,8 +59,8 @@
 //|    - 允许多空共存 (需 Hedging 账户)                               |
 //+------------------------------------------------------------------+
 #property copyright "美分马丁-stable"
-#property version   "1.50"
-#property description "美分马丁-stable v1.5 (黑天鹅按层分档: L<16 全平暂停 30min, L>=16 冻结告警)"
+#property version   "1.60"
+#property description "美分马丁-stable v1.6 (L22 强平 + M1 校验; 黑天鹅按层分档保留)"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -64,6 +72,7 @@ input double LossPriceGap     = 2.0;                   // 加仓阈值: 手数�
 input double AvgProfitTarget  = 0.6;                   // 平仓阈值: 手数加权平均价差(USD/oz), 非美元浮盈
 input double Inp_MinUsdProfit = 0.0;                   // 平仓兜底: 净美元浮盈 ≥ 该值才平, 0=不启用
 input int    MaxOrderCount    = 22;                    // 每方向最大层数 (v1.2: 12→22 对齐真机)
+input bool   Inp_MaxLayerClose= true;                  // v1.6: 达到 MaxOrderCount 立即 CloseAll + 暂停 (主动认亏防爆仓)
 input double MultiAfter4      = 1.3;                   // L13+ 加仓倍数 (前 12 层用 fixedLotArr 查表)
 input int    MagicNum         = 8866;
 input int    Slippage         = 10;                    // 允许滑点(points)
@@ -136,6 +145,15 @@ ENUM_ORDER_TYPE_FILLING DetectFilling()
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   // 图表周期保险 (必须 M1, 防止误挂多图表引起同 magic 双实例)
+   if(Period() != PERIOD_M1)
+   {
+      Print("[stable] [X] 当前图表周期=", EnumToString((ENUM_TIMEFRAMES)Period()),
+            ", EA 只允许挂在 M1 图表, EA 停止");
+      Alert("[stable] EA 必须挂在 M1 图表, 当前周期不对, EA 已停止");
+      return INIT_FAILED;
+   }
+
    // Hedging 校验 (关键: Netting 账户策略跑不了)
    long marginMode = AccountInfoInteger(ACCOUNT_MARGIN_MODE);
    if(marginMode != ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
@@ -165,7 +183,10 @@ int OnInit()
    lastOpenFailTs  = 0;
 
    Print("=============================================");
-   Print("=== 美分马丁-stable v1.5 启动 ===");
+   Print("=== 美分马丁-stable v1.6 启动 ===");
+   Print("[保护] 图表周期校验: 只允许 M1 (当前=", EnumToString((ENUM_TIMEFRAMES)Period()), " [OK])");
+   Print("[保护] 最大层数强平=", Inp_MaxLayerClose ? "开" : "关",
+         " (达 L", MaxOrderCount, " 立即 CloseAll + 暂停 ", Inp_BlackSwanPauseMin, " min)");
    Print("信号周期=", EnumToString(SignalTimeFrame),
          " (取已收 bar[1])",
          "  加仓触发=最新单浮亏≥$", LossPriceGap, "/oz (层间距恒定)",
@@ -384,6 +405,24 @@ bool OpenTrade(int dir, double lots, int layer)
             "  Price=", DoubleToString(price,2),
             "  总浮盈=", DoubleToString(CalcTotalProfit(),2));
       lastOpenFailTs = 0;   // 成功后清失败节流
+
+      // v1.6: 达到 MaxOrderCount 立即全平止损 (主动认亏防爆仓)
+      // 逻辑理由: 满层后价格继续单边走时, 每 $1 追加浮亏 = cumLot × 100 USC
+      // L22 满仓 (15.48 手) 每走 $1 亏 1548 USC ≈ $15, 走 $8 就到 stop-out
+      // 主动在 L22 触发瞬间平仓 (~$101) 好过被动被强平 (~$290+)
+      if(Inp_MaxLayerClose && layer >= MaxOrderCount)
+      {
+         double curLoss = CalcTotalProfit();
+         Print("[stable] [MAX-LAYER] 达到最大层数 L", MaxOrderCount,
+               " → 立即全平止损, 触发时总浮盈=", DoubleToString(curLoss,2), " USC");
+         Alert(StringFormat("[stable] L%d 满层触发全平止损 浮盈=%.2f USC",
+                            MaxOrderCount, curLoss));
+         SendNotification(StringFormat("[stable] L%d 满层强平 浮盈=%.2f USC",
+                                        MaxOrderCount, curLoss));
+         CloseAllByDir(dir);
+         pauseOpenUntil = TimeCurrent() + Inp_BlackSwanPauseMin * 60;
+         lastPauseNoted = false;
+      }
    }
    else
    {
@@ -615,7 +654,7 @@ void UpdatePanel()
    long   spd     = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    int    spdMax  = Inp_MaxSpread + Inp_SpreadBuffer;
 
-   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.5 ===", clrGold); y += lh + 4;
+   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.6 ===", clrGold); y += lh + 4;
 
    string buyStr = StringFormat("多: L%d/%d  手数:%.2f  浮盈:%.2f",
                                 stat.buyCnt, MaxOrderCount, stat.buyTotalLot, buyP);
