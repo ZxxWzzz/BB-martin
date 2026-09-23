@@ -26,7 +26,7 @@
 //|      - 新策略每层间距恒定 = LossPriceGap 参数值                    |
 //|      - 与真机 DetailedStatement.htm 反推 (每层 ~$2.5) 一致        |
 //|    * 新增 GetLastOpenPriceByDir() 取该方向最新一单开仓价           |
-//|    * LossPriceGap 默认值仍为 2.0 (不改); 实盘运行时改成 2.5        |
+//|    * LossPriceGap 默认值 = 2.5 (对齐实盘/真机反推每层~$2.5)        |
 //|    * 平仓逻辑保持不变 (仍用累计均价浮盈 >= AvgProfitTarget)        |
 //|                                                                  |
 //|  v1.3 变更 (vs v1.2):                                             |
@@ -53,7 +53,7 @@
 //|    - M15 MA20/MA50 双均线方向信号                                 |
 //|    - 前 4 单固定 [0.01, 0.02, 0.03, 0.04]                        |
 //|    - 第 5 单起 = 上一单 × MultiAfter4 (默认 1.3)                  |
-//|    - 平均浮亏 >= $2/oz 触发加仓                                   |
+//|    - 最新一单浮亏 >= $2.5/oz 触发加仓                             |
 //|    - 平均浮盈 >= $0.6/oz 平该方向全部                             |
 //|    - 每方向最多 12 单                                             |
 //|    - 允许多空共存 (需 Hedging 账户)                               |
@@ -68,7 +68,7 @@
 //============ 策略参数 ============
 input group "=== 策略核心 ==="
 input ENUM_TIMEFRAMES SignalTimeFrame = PERIOD_M15;    // 判断方向周期
-input double LossPriceGap     = 2.0;                   // 加仓阈值: 手数加权平均价差(USD/oz), 非美元浮亏
+input double LossPriceGap     = 2.5;                   // 加仓阈值: 最新一单浮亏价差(USD/oz), 非美元浮亏
 input double AvgProfitTarget  = 0.6;                   // 平仓阈值: 手数加权平均价差(USD/oz), 非美元浮盈
 input double Inp_MinUsdProfit = 0.0;                   // 平仓兜底: 净美元浮盈 ≥ 该值才平, 0=不启用
 input int    MaxOrderCount    = 22;                    // 每方向最大层数 (v1.2: 12→22 对齐真机)
