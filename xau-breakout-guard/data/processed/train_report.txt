@@ -1,0 +1,30 @@
+XAU 单边行情预警 - LightGBM baseline
+============================================================
+
+数据总量: 831,060 行
+时间范围: 2024-09-15 01:00:00+00:00 ~ 2026-09-18 15:59:00+00:00
+特征数: 37
+正样本比例: 0.031%
+
+切分: train=581,742/+216  valid=124,659/+1  test=124,659/+37
+
+VALID: AUC=0.1896  AP=0.0000
+TEST:  AUC=0.5496  AP=0.0003
+
+Top 15 特征:
+                feature         gain  split
+wti_dist_from_lo_60_pct 7.584595e+08     15
+           time_dow_cos 3.760667e+08      2
+          time_hour_sin 1.218405e+08      5
+wti_dist_from_hi_60_pct 8.458563e+07     17
+         xau_net_ret_60 5.029941e+07      6
+     wti_tr_ratio_20v60 4.453741e+07      4
+xau_dist_from_lo_60_pct 2.972356e+07      6
+       wti_range_60_pct 2.140769e+07      3
+         wti_net_ret_60 6.669455e+06      5
+         wti_net_ret_30 6.448638e+06      2
+spx_dist_from_lo_60_pct 6.141200e+06      9
+          time_hour_cos 5.171922e+06      2
+         xau_net_ret_15 3.086195e+06      3
+                 spx_tr 2.423300e+06      1
+         spx_net_ret_15 8.401853e+05      2

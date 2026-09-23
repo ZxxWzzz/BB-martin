@@ -1,0 +1,57 @@
+# XAU 单边行情预警 - 全局配置
+# 所有点值单位: 1点 = $1 (与 BB 账户规格一致, 0.01手=1oz, 价格变动$1=$1盈亏)
+
+symbol: XAUUSD.ct        # BB(Decode Global) 品种真名, .ct = 标准账户后缀
+timeframe: M1
+
+# ==== 数据拉取 ====
+fetch:
+  years_back: 2                # 回溯 2 年
+  broker_hint: BB              # 提示 (仅注释用, 实际由本地 MT5 终端登录状态决定)
+  raw_path: ../data/raw/xauusd_m1.parquet
+
+# ==== 标注参数 (可调) ====
+label:
+  threshold_move: 58           # 单边行程达到此值 => 命中
+  threshold_pullback: 8        # 反向回撤达到此值 => 淘汰
+  scan_max_bars: 480           # 从起点 bar 向后最多扫描的 bar 数 (8小时,防止无限扫描)
+  processed_path: ../data/processed/labeled.parquet
+
+# ==== 事件过滤 ====
+events:
+  cache_path: ../data/events/economic_events.parquet
+  importance_min: 2            # investpy 重要度 (1/2/3)，>=2 过滤
+  window_minutes_before: 30
+  window_minutes_after: 30
+  # 统计异常兜底: 单分钟真实波幅 > sigma_mult * rolling_std 视为异常事件
+  sigma_mult: 5.0
+  sigma_window: 1440           # 1天 rolling
+
+# ==== 训练 ====
+train:
+  # 时序切分 (按比例): 前 70% 训练 / 15% 验证 / 15% 测试
+  split_train: 0.70
+  split_valid: 0.15
+  # LightGBM 基础参数, 后续再调
+  lgbm:
+    objective: binary
+    metric: [auc, average_precision]
+    learning_rate: 0.03
+    num_leaves: 63
+    min_data_in_leaf: 200
+    feature_fraction: 0.8
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    n_estimators: 2000
+    early_stopping_rounds: 100
+  # 类别不平衡: 命中样本占比大概率 <5%, 用 scale_pos_weight 自动补偿
+  auto_scale_pos_weight: true
+  model_path: ../data/processed/model_lgbm.txt
+
+# ==== 回测 ====
+backtest:
+  # 成本模型 (以马丁场景估算)
+  cost_per_block: 5.0          # 一次误拦截错过的均值收益 ($)
+  gain_per_avoid: 500.0        # 一次成功规避爆仓的均值收益 ($)
+  # 阈值扫描
+  threshold_grid: [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]

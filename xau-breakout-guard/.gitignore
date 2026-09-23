@@ -1,0 +1,26 @@
+# ── 超大可再生文件不入库 ──────────────────────────────────────────
+# 原始行情 parquet + 衍生的巨型中间数据都能由 src/ 脚本重跑生成,
+# 不进 git 历史 (单文件 >100M 会被 GitHub 拒 push, 且撑大 clone)。
+# 复现按 README「典型流程」重跑即可。
+#
+# 具体挡的:
+#   features.parquet ~138M / rule_fires.csv ~125M / backtest_R1_*.csv ~54M
+#   raw/*.parquet (xau/spx/usdidx/wti M1) 各 13~19M
+#   test_predictions.csv ~5.5M (模型逐bar打分, 纯再生)
+data/raw/*.parquet
+data/processed/*.parquet
+data/processed/rule_fires.csv
+data/processed/backtest_*.csv
+data/processed/test_predictions.csv
+
+# 图片产物 (作图脚本可重出)
+data/processed/*.png
+
+# 其余小结果 CSV / txt (scoreboard / summary / 各类 events) 全部保留,
+# 它们就是项目结论本身, 直接可读。
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
