@@ -1,6 +1,9 @@
 ﻿//+------------------------------------------------------------------+
 //|                                              美分马丁-stable.mq5 |
-//|                                                      Version 1.6 |
+//|                                                      Version 1.7 |
+//|                                                                  |
+//|  v1.7 变更 (vs v1.6): LossPriceGap 默认值 2.0 -> 2.5 对齐实盘      |
+//|    * LossPriceGap 默认值从 $2.0 调为 $2.5, 与真机反推层间距一致    |
 //|                                                                  |
 //|  v1.6 变更 (vs v1.5): 最大层数强平 + M1 图表校验                    |
 //|    * 新参数 Inp_MaxLayerClose (默认 true)                          |
@@ -59,8 +62,8 @@
 //|    - 允许多空共存 (需 Hedging 账户)                               |
 //+------------------------------------------------------------------+
 #property copyright "美分马丁-stable"
-#property version   "1.60"
-#property description "美分马丁-stable v1.6 (L22 强平 + M1 校验; 黑天鹅按层分档保留)"
+#property version   "1.70"
+#property description "美分马丁-stable v1.7 (LossPriceGap 2.0→2.5 对齐实盘; L22 强平 + M1 校验)"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -183,7 +186,7 @@ int OnInit()
    lastOpenFailTs  = 0;
 
    Print("=============================================");
-   Print("=== 美分马丁-stable v1.6 启动 ===");
+   Print("=== 美分马丁-stable v1.7 启动 ===");
    Print("[保护] 图表周期校验: 只允许 M1 (当前=", EnumToString((ENUM_TIMEFRAMES)Period()), " [OK])");
    Print("[保护] 最大层数强平=", Inp_MaxLayerClose ? "开" : "关",
          " (达 L", MaxOrderCount, " 立即 CloseAll + 暂停 ", Inp_BlackSwanPauseMin, " min)");
@@ -654,7 +657,7 @@ void UpdatePanel()
    long   spd     = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    int    spdMax  = Inp_MaxSpread + Inp_SpreadBuffer;
 
-   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.6 ===", clrGold); y += lh + 4;
+   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.7 ===", clrGold); y += lh + 4;
 
    string buyStr = StringFormat("多: L%d/%d  手数:%.2f  浮盈:%.2f",
                                 stat.buyCnt, MaxOrderCount, stat.buyTotalLot, buyP);
