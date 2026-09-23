@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>美分马丁-stable 曲线分析</title>
+<style>
+  :root, :root[data-theme="dark"] {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --yellow: #d29922; --red: #f85149;
+    --orange: #db6d28; --purple: #a371f7;
+    --input-bg: #0d1117; --shadow: rgba(0,0,0,0.5);
+  }
+  :root[data-theme="light"] {
+    --bg: #ffffff; --panel: #f6f8fa; --border: #d0d7de;
+    --text: #1f2328; --muted: #656d76; --accent: #0969da;
+    --green: #1a7f37; --yellow: #9a6700; --red: #cf222e;
+    --orange: #bc4c00; --purple: #8250df;
+    --input-bg: #ffffff; --shadow: rgba(31,35,40,0.15);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 13px; padding: 16px; max-width: 1600px; margin: 0 auto;
+  }
+  h1 { font-size: 20px; color: var(--accent); margin-bottom: 6px; }
+  .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+
+  .theme-toggle {
+    position: fixed; top: 12px; right: 12px; z-index: 200;
+    background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 12px; border-radius: 6px;
+    cursor: pointer; font-size: 13px;
+    box-shadow: 0 2px 8px var(--shadow);
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+
+  .layout {
+    display: grid; grid-template-columns: 1fr 320px; gap: 16px;
+  }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 14px; margin-bottom: 12px;
+  }
+  .panel-sticky {
+    position: sticky; top: 8px;
+    box-shadow: 0 4px 16px var(--shadow);
+    max-height: calc(100vh - 32px); overflow-y: auto;
+  }
+  h2 { font-size: 13px; color: var(--muted); margin-bottom: 10px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+
+  .field { margin-bottom: 10px; }
+  .field label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+  .field input[type="number"], .field select {
+    width: 100%; background: var(--input-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 8px; font-size: 13px; font-family: inherit;
+  }
+  .field input:focus, .field select:focus {
+    outline: none; border-color: var(--accent);
+  }
+
+  .chart-title { font-size: 13px; color: var(--text); font-weight: bold; margin-bottom: 4px; }
+  .chart-subtitle { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+  .chart-canvas { display: block; width: 100%; height: 320px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: normal; background: var(--input-bg); position: sticky; top: 0; }
+  td.layer { color: var(--accent); font-weight: bold; text-align: left; }
+  tr.milestone-warn { background: rgba(219, 109, 40, 0.08); }
+  tr.milestone-max { background: rgba(248, 81, 73, 0.10); }
+  .val-neg { color: var(--red); }
+  .val-pos { color: var(--green); }
+
+  .lot-table { font-size: 11px; }
+  .lot-table td { padding: 3px 6px; }
+  .lot-table td.layer { color: var(--muted); }
+
+  .summary {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 8px; margin-top: 8px; font-size: 11px;
+  }
+  .summary .kv { color: var(--muted); }
+  .summary .kv b { color: var(--text); }
+
+  .stepper { display: flex; gap: 6px; align-items: stretch; }
+  .stepper input { flex: 1; text-align: center; }
+  .step-btn {
+    background: var(--input-bg); border: 1px solid var(--border);
+    color: var(--text); border-radius: 4px; cursor: pointer;
+    width: 36px; font-size: 16px; line-height: 1; padding: 0;
+    flex: none;
+  }
+  .step-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .step-btn:active { background: var(--border); }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" onclick="toggleTheme()">🌙 主题</button>
+
+<h1>美分马丁-stable 曲线分析</h1>
+<div class="subtitle">
+  基于 <b>v1.5</b> 参数 · 展示每层加仓时的开仓价 / 均价 / 平仓触发价 / 浮亏演进 ·
+  <a href="https://github.com/ZxxWzzz/BB-martin" target="_blank" style="color:var(--accent)">GitHub</a>
+</div>
+
+<div class="layout">
+
+  <!-- 主区 -->
+  <div>
+    <!-- 图1: 价格视图 -->
+    <div class="panel">
+      <div class="chart-title">💹 价格视图</div>
+      <div class="chart-subtitle">
+        <span style="color:var(--red)">■</span> 各层开仓价 (阶梯上升) ·
+        <span style="color:var(--yellow)">■</span> 加权均价 (被大手数拉动) ·
+        <span style="color:var(--green)">■</span> 平仓触发价 (均价 − ProfitTarget) ·
+        灰色阴影 = 反弹距离
+      </div>
+      <canvas id="priceChart" class="chart-canvas"></canvas>
+    </div>
+
+    <!-- 图2: 反弹距离 -->
+    <div class="panel">
+      <div class="chart-title">📏 反弹距离 (每层触发时, 价格需反弹多少美元才平仓)</div>
+      <div class="chart-subtitle">
+        <span style="color:var(--accent)">■</span> 从当前 open 反弹到 close_trigger 的价差 ·
+        越靠后曲线越平缓, 因均价被深层手数拉近当前价
+      </div>
+      <canvas id="reboundChart" class="chart-canvas"></canvas>
+    </div>
+
+    <!-- 图3: 浮亏和账户风险 -->
+    <div class="panel">
+      <div class="chart-title">💰 浮亏 & 保证金 (Ln 触发瞬间的账户状态)</div>
+      <div class="chart-subtitle">
+        <span style="color:var(--red)">■</span> 累计浮亏 (L1..L(n−1) 亏) ·
+        <span style="color:var(--purple)">■</span> 累计保证金占用 ·
+        <span style="color:var(--orange)">■</span> 净值 (=账户余额−浮亏)
+      </div>
+      <canvas id="lossChart" class="chart-canvas"></canvas>
+      <div class="summary" id="riskSummary"></div>
+    </div>
+
+    <!-- 数据表 -->
+    <div class="panel">
+      <h2>每层详细数据</h2>
+      <div style="max-height:480px; overflow-y:auto;">
+        <table id="dataTable">
+          <thead>
+            <tr>
+              <th style="text-align:left">层</th>
+              <th>手数</th>
+              <th>累计手数</th>
+              <th>开仓价</th>
+              <th>距 L1</th>
+              <th>均价</th>
+              <th>平仓触发价</th>
+              <th>反弹距离</th>
+              <th>触发时浮亏</th>
+              <th>保证金</th>
+              <th>浮亏率</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 侧栏参数 -->
+  <div>
+    <div class="panel panel-sticky">
+      <h2>策略参数</h2>
+      <div class="field">
+        <label>L1 首单开仓价 (美元)</label>
+        <input type="number" id="p1" value="4300" step="1">
+      </div>
+      <div class="field">
+        <label>LossPriceGap · 每层间距 (美元/oz)</label>
+        <input type="number" id="gap" value="2.0" step="0.1">
+      </div>
+      <div class="field">
+        <label>AvgProfitTarget · 平仓阈值 (美元/oz)</label>
+        <input type="number" id="tp" value="0.6" step="0.1">
+      </div>
+      <div class="field">
+        <label>方向</label>
+        <select id="dir">
+          <option value="sell">空单 (价格上涨=亏)</option>
+          <option value="buy">多单 (价格下跌=亏)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>账户余额 (USC)</label>
+        <input type="number" id="balance" value="30000" step="1000">
+        <div style="color:var(--muted); font-size:11px; margin-top:2px;">
+          $300 = 30000 USC · $600 = 60000 USC
+        </div>
+      </div>
+      <div class="field">
+        <label>加仓层数 (MaxOrderCount)</label>
+        <div class="stepper">
+          <button type="button" class="step-btn" id="layersMinus">－</button>
+          <input type="number" id="layers" value="22" min="1" max="60" step="1">
+          <button type="button" class="step-btn" id="layersPlus">＋</button>
+        </div>
+        <div style="color:var(--muted); font-size:11px; margin-top:2px;">
+          stable 默认 <b>22</b> · L13+ 按 ×1.3 递增
+        </div>
+      </div>
+
+      <h2 style="margin-top:16px">💀 爆仓模拟器</h2>
+      <div style="color:var(--muted); font-size:11px; margin-bottom:8px;">
+        真实爆仓发生在<b>触发某层后价格继续单边走</b>, 不是"触发瞬间"
+      </div>
+      <div class="field">
+        <label>停留在第几层</label>
+        <input type="number" id="stopLayer" value="22" min="1" max="22" step="1">
+      </div>
+      <div class="field">
+        <label>该层后价格再走 (USD)</label>
+        <input type="range" id="extraMove" value="0" min="0" max="30" step="0.5" style="width:100%">
+        <div id="extraMoveLabel" style="text-align:center; margin-top:2px; color:var(--accent); font-weight:bold;">0.0</div>
+      </div>
+      <div id="simSummary" style="padding:8px; background:var(--input-bg); border-radius:4px; font-size:11px; line-height:1.7;"></div>
+
+      <h2 style="margin-top:16px">stable v1.5 手数序列</h2>
+      <table class="lot-table">
+        <thead>
+          <tr>
+            <th style="text-align:left">L</th>
+            <th>Lot</th>
+            <th>累计</th>
+            <th>方式</th>
+          </tr>
+        </thead>
+        <tbody id="lotTbody"></tbody>
+      </table>
+
+      <div style="margin-top: 12px; padding: 8px; background: var(--input-bg); border-radius: 4px; font-size: 11px; color: var(--muted);">
+        <b>参数来源</b>：<code>fixedLotArr</code> = [0.01, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09, 0.12, 0.16, 0.21, 0.27]<br>
+        L13+ = 上一层 × 1.3, floor 到 0.01<br>
+        <br>
+        <b>爆仓阈值参考</b>（$300 账户 stop_out 50%）：<br>
+        L22 满仓 + 再走 <b>$8.5</b> ≈ 爆仓<br>
+        L1→爆仓 单边约 <b>$51</b>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============ 策略常量 ============
+const FIXED_LOTS = [0.01, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09, 0.12, 0.16, 0.21, 0.27];
+const MULTI = 1.3;
+const MIN_LAYERS = 1;
+const MAX_LAYERS = 60;      // 允许的层数上限
+const DEFAULT_LAYERS = 22;  // stable v1.5 默认
+const LEVERAGE = 500;
+
+// ============ 当前层数(可调) ============
+function getLayers() {
+  const n = parseInt(document.getElementById('layers').value, 10);
+  if (!Number.isFinite(n)) return DEFAULT_LAYERS;
+  return Math.min(Math.max(n, MIN_LAYERS), MAX_LAYERS);
+}
+
+// ============ 里程碑(按 16/22 比例随层数缩放) ============
+function getMilestones(N) {
+  const max = N;
+  const warn = Math.min(max - 1, Math.max(1, Math.round(N * 16 / 22)));
+  return { warn, max };
+}
+
+// ============ 手数序列生成 ============
+function computeLots(N) {
+  const n = N || getLayers();
+  const lots = [...FIXED_LOTS];
+  for (let i = FIXED_LOTS.length; i < n; i++) {
+    const raw = lots[i-1] * MULTI;
+    lots.push(Math.floor(raw * 100) / 100);
+  }
+  return lots.slice(0, n);
+}
+
+// ============ 核心计算 ============
+function compute() {
+  const p1 = parseFloat(document.getElementById('p1').value) || 4300;
+  const gap = parseFloat(document.getElementById('gap').value) || 2.0;
+  const tp = parseFloat(document.getElementById('tp').value) || 0.6;
+  const dir = document.getElementById('dir').value;
+  const balance = parseFloat(document.getElementById('balance').value) || 30000;
+
+  const sign = dir === 'sell' ? 1 : -1;   // sell: 价格上涨方向加仓
+  const N = getLayers();
+  const lots = computeLots(N);
+
+  let cumLot = 0, cumWeighted = 0;
+  const opens = [];
+  const rows = [];
+
+  for (let i = 0; i < N; i++) {
+    const layer = i + 1;
+    const lot = lots[i];
+    const openPx = p1 + sign * gap * i;
+    opens.push(openPx);
+    cumLot += lot;
+    cumWeighted += lot * openPx;
+    const avgOpen = cumWeighted / cumLot;
+    const closeTrigger = avgOpen - sign * tp;
+    const rebound = Math.abs(openPx - closeTrigger);
+
+    // Ln 触发瞬间(Ln 刚开, 浮亏还只算 L1..L(n-1))
+    let floatingLoss = 0;
+    for (let j = 0; j < i; j++) {
+      floatingLoss += sign * (openPx - opens[j]) * lots[j] * 100;
+    }
+    // 保证金 (每 0.01 手 = openPx/5 USC)
+    const cumMargin = cumLot * openPx / 5;
+    // 浮亏率 (占余额)
+    const lossPct = balance > 0 ? floatingLoss / balance * 100 : 0;
+    // 净值
+    const equity = balance - floatingLoss;
+
+    rows.push({
+      layer, lot, cumLot,
+      openPx, avgOpen, closeTrigger, rebound,
+      floatingLoss, cumMargin, lossPct, equity
+    });
+  }
+
+  const milestones = getMilestones(N);
+  return { rows, params: { p1, gap, tp, dir, balance, sign, N, milestones } };
+}
+
+// ============ 表格渲染 ============
+function renderTable(rows, milestones) {
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = rows.map(r => {
+    const cls = r.layer === milestones.max ? 'milestone-max' :
+                r.layer === milestones.warn ? 'milestone-warn' : '';
+    return `<tr class="${cls}">
+      <td class="layer">L${r.layer}</td>
+      <td>${r.lot.toFixed(2)}</td>
+      <td>${r.cumLot.toFixed(2)}</td>
+      <td>${r.openPx.toFixed(2)}</td>
+      <td>${((r.openPx - rows[0].openPx) >= 0 ? '+' : '') + (r.openPx - rows[0].openPx).toFixed(2)}</td>
+      <td>${r.avgOpen.toFixed(2)}</td>
+      <td>${r.closeTrigger.toFixed(2)}</td>
+      <td>${r.rebound.toFixed(3)}</td>
+      <td class="val-neg">${r.floatingLoss > 0 ? '-' : ''}${r.floatingLoss.toFixed(1)}</td>
+      <td>${r.cumMargin.toFixed(0)}</td>
+      <td class="${r.lossPct >= 25 ? 'val-neg' : ''}">${r.lossPct.toFixed(2)}%</td>
+    </tr>`;
+  }).join('');
+}
+
+// ============ 手数表(侧栏) ============
+function renderLotTable() {
+  const lots = computeLots();
+  let cum = 0;
+  const rows = lots.map((lot, i) => {
+    cum += lot;
+    const method = i < FIXED_LOTS.length ? '查表' : '×1.3';
+    return `<tr>
+      <td class="layer">L${i+1}</td>
+      <td>${lot.toFixed(2)}</td>
+      <td>${cum.toFixed(2)}</td>
+      <td style="color:var(--muted)">${method}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('lotTbody').innerHTML = rows;
+}
+
+// ============ Canvas 工具 ============
+function css(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function setupCanvas(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return { ctx, W: rect.width, H: rect.height };
+}
+
+function drawAxes(ctx, W, H, pad, xLabels, yMin, yMax, yLabel, yFmt) {
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+  ctx.strokeStyle = css('--border');
+  ctx.fillStyle = css('--muted');
+  ctx.font = '10px system-ui';
+  ctx.lineWidth = 1;
+
+  // Y grid
+  const ySteps = 5;
+  for (let i = 0; i <= ySteps; i++) {
+    const y = pad.top + plotH - (plotH * i / ySteps);
+    const v = yMin + (yMax - yMin) * i / ySteps;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(W - pad.right, y);
+    ctx.strokeStyle = i === 0 ? css('--muted') : css('--border');
+    ctx.stroke();
+    ctx.fillText(yFmt ? yFmt(v) : v.toFixed(0), 4, y + 3);
+  }
+
+  // X 标签
+  const N = xLabels.length;
+  for (let i = 0; i < N; i++) {
+    if (i % 2 !== 0 && N > 12) continue;
+    const x = pad.left + plotW * i / (N - 1);
+    ctx.fillText(xLabels[i], x - 8, H - pad.bottom + 14);
+  }
+
+  // X 轴标题
+  ctx.fillText('层号', W / 2 - 10, H - 2);
+  // Y 轴标题
+  ctx.save();
+  ctx.translate(10, H / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(yLabel, 0, 0);
+  ctx.restore();
+}
+
+function xy(pad, plotW, plotH, i, N, v, yMin, yMax) {
+  return {
+    x: pad.left + plotW * i / (N - 1),
+    y: pad.top + plotH - (plotH * (v - yMin) / (yMax - yMin))
+  };
+}
+
+// ============ 图1: 价格视图 ============
+function drawPriceChart(rows, params) {
+  const canvas = document.getElementById('priceChart');
+  const { ctx, W, H } = setupCanvas(canvas);
+  const pad = { top: 20, right: 20, bottom: 30, left: 60 };
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+
+  // 数据范围
+  const allY = rows.flatMap(r => [r.openPx, r.avgOpen, r.closeTrigger]);
+  const yMin = Math.min(...allY) - 1;
+  const yMax = Math.max(...allY) + 1;
+  const xLabels = rows.map(r => 'L' + r.layer);
+
+  ctx.clearRect(0, 0, W, H);
+  drawAxes(ctx, W, H, pad, xLabels, yMin, yMax, '价格', v => v.toFixed(1));
+
+  // 阴影: 反弹区域 (openPx <-> closeTrigger)
+  ctx.fillStyle = css('--muted') + '30';
+  ctx.beginPath();
+  for (let i = 0; i < rows.length; i++) {
+    const p = xy(pad, plotW, plotH, i, rows.length, rows[i].openPx, yMin, yMax);
+    if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+  }
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const p = xy(pad, plotW, plotH, i, rows.length, rows[i].closeTrigger, yMin, yMax);
+    ctx.lineTo(p.x, p.y);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // 三条线
+  const drawLine = (getY, color, width = 2) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    for (let i = 0; i < rows.length; i++) {
+      const p = xy(pad, plotW, plotH, i, rows.length, getY(rows[i]), yMin, yMax);
+      if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+
+    // 数据点
+    ctx.fillStyle = color;
+    for (let i = 0; i < rows.length; i++) {
+      const p = xy(pad, plotW, plotH, i, rows.length, getY(rows[i]), yMin, yMax);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+  drawLine(r => r.openPx, css('--red'));
+  drawLine(r => r.avgOpen, css('--yellow'));
+  drawLine(r => r.closeTrigger, css('--green'));
+
+  // 里程碑参考线 (warn / max)
+  const { warn, max } = params.milestones;
+  [warn, max].forEach(ml => {
+    const x = pad.left + plotW * (ml - 1) / (rows.length - 1);
+    ctx.strokeStyle = ml === max ? css('--red') + '80' : css('--orange') + '80';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x, pad.top);
+    ctx.lineTo(x, pad.top + plotH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = ml === max ? css('--red') : css('--orange');
+    ctx.fillText('L' + ml, x - 6, pad.top - 4);
+  });
+}
+
+// ============ 图2: 反弹距离 ============
+function drawReboundChart(rows, milestones) {
+  const canvas = document.getElementById('reboundChart');
+  const { ctx, W, H } = setupCanvas(canvas);
+  const pad = { top: 20, right: 20, bottom: 30, left: 60 };
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+
+  const yMax = Math.max(...rows.map(r => r.rebound)) * 1.1;
+  const yMin = 0;
+  const xLabels = rows.map(r => 'L' + r.layer);
+
+  ctx.clearRect(0, 0, W, H);
+  drawAxes(ctx, W, H, pad, xLabels, yMin, yMax, '反弹距离 (USD)', v => v.toFixed(2));
+
+  // 柱状
+  const barW = plotW / rows.length * 0.7;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const x = pad.left + plotW * i / (rows.length - 1);
+    const p = xy(pad, plotW, plotH, i, rows.length, r.rebound, yMin, yMax);
+    ctx.fillStyle = r.layer >= milestones.max ? css('--red') :
+                    r.layer >= milestones.warn ? css('--orange') : css('--accent');
+    ctx.fillRect(x - barW/2, p.y, barW, pad.top + plotH - p.y);
+    // 数值
+    if (i < 5 || i === rows.length - 1 || i % 3 === 0) {
+      ctx.fillStyle = css('--text');
+      ctx.fillText(r.rebound.toFixed(2), x - 12, p.y - 4);
+    }
+  }
+}
+
+// ============ 图3: 浮亏 & 保证金 ============
+function drawLossChart(rows, params) {
+  const canvas = document.getElementById('lossChart');
+  const { ctx, W, H } = setupCanvas(canvas);
+  const pad = { top: 20, right: 20, bottom: 30, left: 70 };
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+
+  const yMax = Math.max(
+    ...rows.map(r => r.floatingLoss),
+    ...rows.map(r => r.cumMargin),
+    params.balance
+  ) * 1.1;
+  const yMin = Math.min(0, ...rows.map(r => r.equity));
+  const xLabels = rows.map(r => 'L' + r.layer);
+
+  ctx.clearRect(0, 0, W, H);
+  drawAxes(ctx, W, H, pad, xLabels, yMin, yMax, 'USC', v => v.toFixed(0));
+
+  // 余额基准线
+  const balP = xy(pad, plotW, plotH, 0, 1, params.balance, yMin, yMax);
+  ctx.strokeStyle = css('--muted') + '80';
+  ctx.setLineDash([2, 4]);
+  ctx.beginPath();
+  ctx.moveTo(pad.left, balP.y);
+  ctx.lineTo(pad.left + plotW, balP.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = css('--muted');
+  ctx.fillText('余额 ' + params.balance.toFixed(0), pad.left + plotW - 100, balP.y - 4);
+
+  // 3 条线
+  const drawLine = (getY, color) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < rows.length; i++) {
+      const p = xy(pad, plotW, plotH, i, rows.length, getY(rows[i]), yMin, yMax);
+      if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+
+    ctx.fillStyle = color;
+    for (let i = 0; i < rows.length; i++) {
+      const p = xy(pad, plotW, plotH, i, rows.length, getY(rows[i]), yMin, yMax);
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2); ctx.fill();
+    }
+  };
+  drawLine(r => r.floatingLoss, css('--red'));
+  drawLine(r => r.cumMargin, css('--purple'));
+  drawLine(r => r.equity, css('--orange'));
+
+  // 里程碑参考线 (warn / max)
+  const { warn, max } = params.milestones;
+  [warn, max].forEach(ml => {
+    const x = pad.left + plotW * (ml - 1) / (rows.length - 1);
+    ctx.strokeStyle = ml === max ? css('--red') + '80' : css('--orange') + '80';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + plotH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+}
+
+// ============ 风险汇总 ============
+function renderRiskSummary(rows, params) {
+  const el = document.getElementById('riskSummary');
+  const { warn, max } = params.milestones;
+  const lWarn = rows[warn - 1], lMax = rows[max - 1];
+  const maxMargin = lMax.cumMargin;
+  const maxLoss = lMax.floatingLoss;
+  const maxEquity = params.balance - maxLoss;
+  const remainForLoss = maxEquity - maxMargin * 0.5;
+  const perDollar = lMax.cumLot * 100;
+  const stopoutMoveAfterMax = perDollar > 0 ? remainForLoss / perDollar : 0;
+
+  el.innerHTML = `
+    <div class="kv">L${warn} 触发浮亏：<b>${lWarn.floatingLoss.toFixed(1)} USC</b> (${lWarn.lossPct.toFixed(1)}%)</div>
+    <div class="kv">L${max} 触发浮亏：<b class="val-neg">${lMax.floatingLoss.toFixed(1)} USC</b> (${lMax.lossPct.toFixed(1)}%)</div>
+    <div class="kv">L${max} 累计手数：<b>${lMax.cumLot.toFixed(2)}</b></div>
+    <div class="kv">L${max} 保证金：<b>${lMax.cumMargin.toFixed(0)} USC</b></div>
+    <div class="kv">L${max} 后可扛：<b class="val-neg">再走 ${stopoutMoveAfterMax.toFixed(2)} 美元</b> = 爆仓</div>
+    <div class="kv">L1→爆仓：<b class="val-neg">${(params.gap * (max - 1) + stopoutMoveAfterMax).toFixed(2)} 美元</b> 单边</div>
+  `;
+}
+
+// ============ 爆仓模拟器 ============
+function renderSimulator(rows, params) {
+  const stopLayer = Math.min(Math.max(parseInt(document.getElementById('stopLayer').value) || params.N, 1), params.N);
+  const extraMove = parseFloat(document.getElementById('extraMove').value) || 0;
+  document.getElementById('extraMoveLabel').textContent = extraMove.toFixed(1);
+
+  const sim = rows[stopLayer - 1];
+  // 假设当前价 = sim.openPx + sign * extraMove (向亏损方向多走)
+  // 各层 j 的浮亏 = sign * (currentPrice - open_j) × lot_j × 100
+  const currentPrice = sim.openPx + params.sign * extraMove;
+  let totalLoss = 0;
+  for (let j = 0; j < stopLayer; j++) {
+    totalLoss += params.sign * (currentPrice - rows[j].openPx) * rows[j].lot * 100;
+  }
+  const cumMargin = sim.cumMargin;
+  const equity = params.balance - totalLoss;
+  const marginLevel = cumMargin > 0 ? equity / cumMargin * 100 : 0;
+  const lossPct = totalLoss / params.balance * 100;
+  const remainDollar = cumMargin > 0 ? (equity - cumMargin * 0.5) / (sim.cumLot * 100) : 0;
+  const blowup = marginLevel <= 50 || equity <= 0;
+
+  const el = document.getElementById('simSummary');
+  el.innerHTML = `
+    <div>当前价：<b>${currentPrice.toFixed(2)}</b></div>
+    <div>累计浮亏：<b class="val-neg">-${totalLoss.toFixed(1)} USC</b> (${lossPct.toFixed(1)}%)</div>
+    <div>保证金：<b>${cumMargin.toFixed(0)} USC</b></div>
+    <div>净值：<b class="${equity > cumMargin ? '' : 'val-neg'}">${equity.toFixed(1)} USC</b></div>
+    <div>Margin Level：<b class="${marginLevel > 100 ? '' : 'val-neg'}">${marginLevel.toFixed(0)}%</b></div>
+    <div style="margin-top:6px; padding-top:6px; border-top:1px solid var(--border);">
+      ${blowup
+        ? '<b class="val-neg">💀 已爆仓 (equity ≤ margin×50%)</b>'
+        : `再走 <b class="val-neg">${remainDollar.toFixed(2)}</b> USD = 爆仓`}
+    </div>
+  `;
+}
+
+// ============ 主渲染 ============
+function render() {
+  const { rows, params } = compute();
+  // 让爆仓层输入的上限跟随当前层数
+  const stopEl = document.getElementById('stopLayer');
+  stopEl.max = params.N;
+  if (parseInt(stopEl.value, 10) > params.N) stopEl.value = params.N;
+  renderTable(rows, params.milestones);
+  drawPriceChart(rows, params);
+  drawReboundChart(rows, params.milestones);
+  drawLossChart(rows, params);
+  renderRiskSummary(rows, params);
+  renderSimulator(rows, params);
+}
+
+// ============ 主题 ============
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  render();
+}
+document.documentElement.setAttribute('data-theme',
+  localStorage.getItem('theme') || 'dark');
+
+// ============ 层数 ＋/－ 步进 ============
+function stepLayers(delta) {
+  const el = document.getElementById('layers');
+  const cur = parseInt(el.value, 10) || DEFAULT_LAYERS;
+  el.value = Math.min(Math.max(cur + delta, MIN_LAYERS), MAX_LAYERS);
+  render();
+}
+document.getElementById('layersMinus').addEventListener('click', () => stepLayers(-1));
+document.getElementById('layersPlus').addEventListener('click', () => stepLayers(1));
+
+// ============ 绑定事件 ============
+['p1', 'gap', 'tp', 'dir', 'balance', 'layers', 'stopLayer', 'extraMove'].forEach(id => {
+  document.getElementById(id).addEventListener('input', render);
+  document.getElementById(id).addEventListener('change', render);
+});
+window.addEventListener('resize', () => setTimeout(render, 100));
+
+// ============ 初始 ============
+renderLotTable();
+render();
+</script>
+</body>
+</html>
