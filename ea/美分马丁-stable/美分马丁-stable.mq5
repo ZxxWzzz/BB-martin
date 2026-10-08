@@ -1,6 +1,12 @@
 ﻿//+------------------------------------------------------------------+
 //|                                              美分马丁-stable.mq5 |
-//|                                                      Version 1.7 |
+//|                                                      Version 1.8 |
+//|                                                                  |
+//|  v1.8 变更 (vs v1.7): 单向轮换 + 平仓重试 + 面板升级               |
+//|    * [A] 信号翻转时先 CloseAllByDir 对向仓位 (单向轮换防双向失控)   |
+//|    * [B] MaxLayerClose 触发后兜底检查并清对向残仓                   |
+//|    * [C] CloseAllByDir 每单重试最多 10 次, 全失败冻结+推送+面板显示  |
+//|    * [D] 面板改为单行: 当前方向层数/手数/浮盈/目标价/预期收益        |
 //|                                                                  |
 //|  v1.7 变更 (vs v1.6): LossPriceGap 默认值 2.0 -> 2.5 对齐实盘      |
 //|    * LossPriceGap 默认值从 $2.0 调为 $2.5, 与真机反推层间距一致    |
@@ -62,8 +68,8 @@
 //|    - 允许多空共存 (需 Hedging 账户)                               |
 //+------------------------------------------------------------------+
 #property copyright "美分马丁-stable"
-#property version   "1.70"
-#property description "美分马丁-stable v1.7 (LossPriceGap 2.0→2.5 对齐实盘; L22 强平 + M1 校验)"
+#property version   "1.80"
+#property description "美分马丁-stable v1.8 (单向轮换+平仓重试10次+面板目标价/预期收益)"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -123,6 +129,9 @@ datetime g_newsCacheEventTime = 0;
 bool     g_buyWaitUsd  = false;
 bool     g_sellWaitUsd = false;
 
+// v1.8 [C]: 平仓失败重试计数 (每单独立)
+string   g_closeFailMsg = "";   // 面板显示用
+
 // v1.2: L1-L12 直接用真机 CENT22 反推的手数序列 (L2 复用 L1)
 double fixedLotArr[] = {0.01, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09, 0.12, 0.16, 0.21, 0.27};
 
@@ -134,6 +143,8 @@ struct PosStat
    double sellAvgProfitPrice;
    double buyTotalLot;
    double sellTotalLot;
+   double buyAvgOpenPrice;   // v1.8 [D]: 多仓手数加权平均开仓价
+   double sellAvgOpenPrice;  // v1.8 [D]: 空仓手数加权平均开仓价
 };
 
 //+------------------------------------------------------------------+
@@ -186,7 +197,7 @@ int OnInit()
    lastOpenFailTs  = 0;
 
    Print("=============================================");
-   Print("=== 美分马丁-stable v1.7 启动 ===");
+   Print("=== 美分马丁-stable v1.8 启动 ===");
    Print("[保护] 图表周期校验: 只允许 M1 (当前=", EnumToString((ENUM_TIMEFRAMES)Period()), " [OK])");
    Print("[保护] 最大层数强平=", Inp_MaxLayerClose ? "开" : "关",
          " (达 L", MaxOrderCount, " 立即 CloseAll + 暂停 ", Inp_BlackSwanPauseMin, " min)");
@@ -252,9 +263,11 @@ bool GetPositionStat(PosStat &stat)
    stat.buyCnt = 0; stat.sellCnt = 0;
    stat.buyAvgProfitPrice = 0; stat.sellAvgProfitPrice = 0;
    stat.buyTotalLot = 0; stat.sellTotalLot = 0;
+   stat.buyAvgOpenPrice = 0; stat.sellAvgOpenPrice = 0;  // v1.8 [D]
 
    double sumBuyLot = 0, sumSellLot = 0;
    double sumBuyProMulLot = 0, sumSellProMulLot = 0;
+   double sumBuyOpenMulLot = 0, sumSellOpenMulLot = 0;  // v1.8 [D]
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
@@ -274,19 +287,21 @@ bool GetPositionStat(PosStat &stat)
       {
          stat.buyCnt++;
          proPrice = bid - openPrice;
-         sumBuyLot       += lot;
-         sumBuyProMulLot += proPrice * lot;
+         sumBuyLot           += lot;
+         sumBuyProMulLot     += proPrice * lot;
+         sumBuyOpenMulLot    += openPrice * lot;   // v1.8 [D]
       }
       else if(ptype == POSITION_TYPE_SELL)
       {
          stat.sellCnt++;
          proPrice = openPrice - ask;
-         sumSellLot       += lot;
-         sumSellProMulLot += proPrice * lot;
+         sumSellLot          += lot;
+         sumSellProMulLot    += proPrice * lot;
+         sumSellOpenMulLot   += openPrice * lot;   // v1.8 [D]
       }
    }
-   if(sumBuyLot  > 0) stat.buyAvgProfitPrice  = sumBuyProMulLot  / sumBuyLot;
-   if(sumSellLot > 0) stat.sellAvgProfitPrice = sumSellProMulLot / sumSellLot;
+   if(sumBuyLot  > 0) { stat.buyAvgProfitPrice  = sumBuyProMulLot  / sumBuyLot;  stat.buyAvgOpenPrice  = sumBuyOpenMulLot  / sumBuyLot; }
+   if(sumSellLot > 0) { stat.sellAvgProfitPrice = sumSellProMulLot / sumSellLot; stat.sellAvgOpenPrice = sumSellOpenMulLot / sumSellLot; }
    stat.buyTotalLot  = sumBuyLot;
    stat.sellTotalLot = sumSellLot;
    return (stat.buyCnt + stat.sellCnt) > 0;
@@ -423,6 +438,19 @@ bool OpenTrade(int dir, double lots, int layer)
          SendNotification(StringFormat("[stable] L%d 满层强平 浮盈=%.2f USC",
                                         MaxOrderCount, curLoss));
          CloseAllByDir(dir);
+
+         // v1.8 [B]: 兜底——正常情况改动A已清对向，此处防御性扫描残仓
+         {
+            PosStat ms; GetPositionStat(ms);
+            int oppDir = (dir == 1) ? -1 : 1;
+            int oppCnt = (oppDir == 1) ? ms.buyCnt : ms.sellCnt;
+            if(oppCnt > 0)
+            {
+               Print("[stable] [MAX-LAYER] 发现对向残仓 L", oppCnt, " → 一并平掉");
+               CloseAllByDir(oppDir);
+            }
+         }
+
          pauseOpenUntil = TimeCurrent() + Inp_BlackSwanPauseMin * 60;
          lastPauseNoted = false;
       }
@@ -478,9 +506,34 @@ void CloseAllByDir(int dir)
       if(dir ==  1 && ptype != POSITION_TYPE_BUY)  continue;
       if(dir == -1 && ptype != POSITION_TYPE_SELL) continue;
 
-      if(trade.PositionClose(ticket)) closed++;
-      else Print("[stable] 平仓失败 ticket=", ticket,
-                 " err=", trade.ResultRetcode());
+      // v1.8 [C]: 每单最多重试 10 次, 全失败则冻结 EA
+      bool ok = false;
+      uint lastRc = 0;
+      for(int attempt = 1; attempt <= 10; attempt++)
+      {
+         ok = trade.PositionClose(ticket);
+         lastRc = trade.ResultRetcode();
+         if(ok) break;
+         Print("[stable] 平仓重试 ", attempt, "/10  ticket=", ticket,
+               " rc=", lastRc, " ", trade.ResultRetcodeDescription());
+      }
+
+      if(ok)
+      {
+         closed++;
+      }
+      else
+      {
+         g_closeFailMsg = StringFormat("平仓失败10次 ticket=%llu rc=%u", ticket, lastRc);
+         Print("[stable] [FATAL] ", g_closeFailMsg, " → 冻结 EA");
+         Alert(StringFormat("[stable] 平仓失败10次 ticket=%llu rc=%u, EA 已冻结, 请人工干预",
+                             ticket, lastRc));
+         SendNotification(StringFormat("[stable] 平仓失败10次 ticket=%llu rc=%u 需人工干预",
+                                        ticket, lastRc));
+         emergencyFrozen = true;
+         UpdatePanel();
+         return;
+      }
    }
    if(closed > 0)
       Print("[stable] << 平", dir==1?"多":"空", " ×", closed,
@@ -652,22 +705,50 @@ void UpdatePanel()
    PosStat stat; GetPositionStat(stat);
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double totalP  = CalcTotalProfit();
-   double buyP    = CalcProfitByDir(1);
-   double sellP   = CalcProfitByDir(-1);
    long   spd     = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    int    spdMax  = Inp_MaxSpread + Inp_SpreadBuffer;
 
-   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.7 ===", clrGold); y += lh + 4;
+   // v1.8 [D]: tick 价值 (用于计算预期收益 USC)
+   double tickVal  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double perOz    = (tickSize > 0) ? (tickVal / tickSize) : 0;   // USD/oz per $1 move
 
-   string buyStr = StringFormat("多: L%d/%d  手数:%.2f  浮盈:%.2f",
-                                stat.buyCnt, MaxOrderCount, stat.buyTotalLot, buyP);
-   CreateLbl(panelPfx+"b", 10, y, buyStr,
-             stat.buyCnt==0 ? clrGray : (buyP>=0?clrLime:clrOrange)); y += lh;
+   CreateLbl(panelPfx+"t", 10, y, "=== 美分马丁-stable v1.8 ===", clrGold); y += lh + 4;
 
-   string sellStr = StringFormat("空: L%d/%d  手数:%.2f  浮盈:%.2f",
-                                 stat.sellCnt, MaxOrderCount, stat.sellTotalLot, sellP);
-   CreateLbl(panelPfx+"s", 10, y, sellStr,
-             stat.sellCnt==0 ? clrGray : (sellP>=0?clrAqua:clrOrange)); y += lh;
+   // v1.8 [D]: 当前持仓方向单行显示
+   {
+      string dirStr;
+      color  dirCol;
+      bool   hasBuy  = stat.buyCnt  > 0;
+      bool   hasSell = stat.sellCnt > 0;
+
+      if(!hasBuy && !hasSell)
+      {
+         dirStr = "持仓: 空仓";
+         dirCol = clrGray;
+      }
+      else
+      {
+         // 有持仓时取持仓方向 (单向轮换后通常只有一个方向)
+         int    cnt      = hasBuy ? stat.buyCnt  : stat.sellCnt;
+         double totalLot = hasBuy ? stat.buyTotalLot  : stat.sellTotalLot;
+         double dirProfit= hasBuy ? CalcProfitByDir(1) : CalcProfitByDir(-1);
+         double avgOpen  = hasBuy ? stat.buyAvgOpenPrice  : stat.sellAvgOpenPrice;
+         string dirLabel = hasBuy ? "多" : "空";
+
+         // 目标价: 多=avgOpen+AvgProfitTarget, 空=avgOpen-AvgProfitTarget
+         double targetPrice = hasBuy ? (avgOpen + AvgProfitTarget)
+                                     : (avgOpen - AvgProfitTarget);
+         // 预期收益 = AvgProfitTarget × totalLot × perOz (USC)
+         double expectedProfit = (perOz > 0) ? (AvgProfitTarget * totalLot * perOz) : 0;
+
+         dirStr = StringFormat("%s: L%d/%d  手:%.2f  浮盈:%.2f  →目标:%.2f  预期:+%.2f",
+                               dirLabel, cnt, MaxOrderCount, totalLot, dirProfit,
+                               targetPrice, expectedProfit);
+         dirCol = (dirProfit >= 0) ? clrLime : clrOrange;
+      }
+      CreateLbl(panelPfx+"d", 10, y, dirStr, dirCol); y += lh;
+   }
 
    y += 4;
    CreateLbl(panelPfx+"bal", 10, y,
@@ -678,13 +759,16 @@ void UpdatePanel()
              StringFormat("点差:%d pt (阈值≤%d)", (int)spd, spdMax),
              spd>spdMax ? clrRed : clrWhite); y += lh;
 
-   // 状态行 (优先级: 冻结 > 暂停 > 新闻 > 点差 > 正常)
+   // 状态行 (优先级: 平仓失败冻结 > 黑天鹅冻结 > 暂停 > 新闻 > 点差 > 正常)
    string status = "运行中";
    color  stCol  = clrLime;
 
    if(emergencyFrozen)
    {
-      status = "[!]黑天鹅冻结 (需重启 EA)";
+      if(g_closeFailMsg != "")
+         status = "[FATAL] " + g_closeFailMsg + " 请人工干预";
+      else
+         status = "[!]黑天鹅冻结 (需重启 EA)";
       stCol = clrRed;
    }
    else if(pauseOpenUntil > 0 && TimeCurrent() < pauseOpenUntil)
@@ -848,6 +932,22 @@ void OnTick()
    //--- 信号
    int sig = GetSignal();
    if(sig == 0) { UpdatePanel(); return; }
+
+   // v1.8 [A]: 单向轮换——信号翻转时先平掉对向仓位
+   if(sig == 1 && stat.sellCnt > 0)
+   {
+      Print("[stable] 信号翻多 → 先清空仓 L", stat.sellCnt,
+            " 浮盈=", DoubleToString(CalcProfitByDir(-1), 2));
+      CloseAllByDir(-1);
+      GetPositionStat(stat);   // 刷新 stat
+   }
+   else if(sig == -1 && stat.buyCnt > 0)
+   {
+      Print("[stable] 信号翻空 → 先清多仓 L", stat.buyCnt,
+            " 浮盈=", DoubleToString(CalcProfitByDir(1), 2));
+      CloseAllByDir(1);
+      GetPositionStat(stat);   // 刷新 stat
+   }
 
    int totalPos = stat.buyCnt + stat.sellCnt;
 
