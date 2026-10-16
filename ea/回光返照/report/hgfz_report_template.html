@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>回光返照 复利增长曲线</title>
+<style>
+  :root{
+    color-scheme: light;
+    --surface:#fcfcfb; --page:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e;
+    --muted:#898781; --grid:#e1e0d9; --axis:#c3c2b7;
+    --border:rgba(11,11,11,0.10);
+    --good:#006300; --crit:#d03b3b;
+    --c0:#86b6ef; --c1:#6da7ec; --c2:#5598e7; --c3:#3987e5;
+    --c4:#2a78d6; --c5:#1c5cab; --c6:#104281;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      color-scheme: dark;
+      --surface:#1a1a19; --page:#0d0d0d; --ink:#f0efec; --ink2:#c3c2b7;
+      --muted:#898781; --grid:#2c2c2a; --axis:#383835;
+      --border:rgba(255,255,255,0.10);
+      --good:#0ca30c; --crit:#e66767;
+      --c0:#1c5cab; --c1:#256abf; --c2:#2a78d6; --c3:#3987e5;
+      --c4:#5598e7; --c5:#6da7ec; --c6:#9ec5f4;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --surface:#1a1a19; --page:#0d0d0d; --ink:#f0efec; --ink2:#c3c2b7;
+    --muted:#898781; --grid:#2c2c2a; --axis:#383835;
+    --border:rgba(255,255,255,0.10);
+    --good:#0ca30c; --crit:#e66767;
+    --c0:#1c5cab; --c1:#256abf; --c2:#2a78d6; --c3:#3987e5;
+    --c4:#5598e7; --c5:#6da7ec; --c6:#9ec5f4;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--page);color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:24px 16px 64px;}
+  h1{font-size:22px;margin:0 0 4px;}
+  .sub{color:var(--ink2);font-size:13px;line-height:1.6;margin:0 0 2px;}
+  .warn{color:var(--crit);font-weight:600;}
+  .card{background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;padding:18px 18px 10px;margin-top:18px;}
+  .toggle{display:inline-flex;border:1px solid var(--border);border-radius:9px;
+    overflow:hidden;margin:16px 0 4px;}
+  .toggle button{appearance:none;border:0;background:transparent;color:var(--ink2);
+    font:inherit;font-size:13px;padding:8px 16px;cursor:pointer;}
+  .toggle button.on{background:var(--c3);color:#fff;font-weight:600;}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:10px;margin:14px 0 2px;}
+  .tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;
+    padding:12px 14px;}
+  .tile .k{font-size:12px;color:var(--muted);}
+  .tile .v{font-size:20px;font-weight:650;margin-top:3px;
+    font-variant-numeric:tabular-nums;}
+  .tile .v.sm{font-size:15px;}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:12px 2px 4px;}
+  .lg{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;
+    color:var(--ink2);cursor:pointer;user-select:none;padding:3px 4px;border-radius:6px;}
+  .lg .sw{width:22px;height:3px;border-radius:2px;}
+  .lg.off{opacity:.32;text-decoration:line-through;}
+  .charttitle{font-size:13px;color:var(--ink2);margin:2px 2px 8px;font-weight:600;}
+  .cv{position:relative;width:100%;}
+  canvas{display:block;width:100%;}
+  .tip{position:absolute;pointer-events:none;background:var(--surface);
+    border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;
+    box-shadow:0 4px 14px rgba(0,0,0,.14);min-width:150px;opacity:0;transition:opacity .08s;
+    font-variant-numeric:tabular-nums;z-index:5;}
+  .tip .d{color:var(--muted);margin-bottom:4px;font-size:11px;}
+  .tip .r{display:flex;justify-content:space-between;gap:12px;}
+  .tip .r .nm{display:inline-flex;align-items:center;gap:5px;}
+  .tip .r .sw{width:9px;height:9px;border-radius:2px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px;
+    font-variant-numeric:tabular-nums;}
+  th,td{text-align:right;padding:7px 8px;border-bottom:1px solid var(--border);}
+  th:first-child,td:first-child{text-align:left;}
+  th{color:var(--muted);font-weight:600;font-size:12px;}
+  td .ruin{color:var(--crit);font-weight:600;}
+  td .ok{color:var(--good);}
+  .note{font-size:12px;color:var(--muted);line-height:1.6;margin-top:10px;}
+  .themebtn{float:right;appearance:none;border:1px solid var(--border);
+    background:var(--surface);color:var(--ink2);border-radius:8px;padding:6px 12px;
+    font:inherit;font-size:12px;cursor:pointer;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <button class="themebtn" id="themebtn">◐ 主题</button>
+  <h1>回光返照 — 复利增长曲线</h1>
+  <p class="sub" id="meta1"></p>
+  <p class="sub" id="meta2"></p>
+  <p class="sub warn" id="warnline"></p>
+
+  <div class="toggle" id="modetog">
+    <button data-mode="ratchet" class="on">只涨不跌（原规则）</button>
+    <button data-mode="symmetric">对称刹车</button>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="card">
+    <div class="charttitle">资金曲线（对数纵轴 · 每笔成交后账户净值）</div>
+    <div class="legend" id="legend"></div>
+    <div class="cv">
+      <canvas id="eq"></canvas>
+      <div class="tip" id="tip"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="charttitle">回撤曲线（距账户历史峰值的回落 % · 越深越危险）</div>
+    <div class="cv"><canvas id="dd"></canvas></div>
+  </div>
+
+  <div class="card">
+    <div class="charttitle">完整结果表</div>
+    <table id="tbl">
+      <thead><tr><th>起始本金</th><th>2年终值</th><th>倍数</th>
+        <th>最大回撤</th><th>末端手数</th><th>结局</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="note" id="tblnote"></p>
+  </div>
+
+  <p class="note">
+    说明：曲线为逐笔成交后的账户净值，x 轴按成交先后（标注日期）。资金曲线用对数纵轴，
+    因此一条直线代表恒定复利速度；两条线斜率可直接比较。回撤 = 当前净值距该账户历史最高点的回落百分比，
+    是决定你会不会在半路被震出局的关键。所有结果基于单一黄金牛市行情、未计尾部滑点，真实情况只会更保守。
+  </p>
+</div>
+
+<script>
+window.HGFZ = /*__DATA__*/;
+</script>
+<script>
+(function(){
+  const D = window.HGFZ;
+  const COLORS = ['--c0','--c1','--c2','--c3','--c4','--c5','--c6'];
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+  // 按起始本金分组: 每个 mode 下 7 档
+  const starts = [...new Set(D.series.map(s=>s.start))].sort((a,b)=>a-b);
+  const colorForStart = {};
+  starts.forEach((s,i)=> colorForStart[s]=COLORS[Math.min(i,COLORS.length-1)]);
+
+  let mode = 'ratchet';
+  const visible = {}; starts.forEach(s=>visible[s]=true);
+
+  // 元信息
+  document.getElementById('meta1').textContent =
+    '策略：'+D.meta.strategy;
+  document.getElementById('meta2').textContent =
+    '数据：'+D.meta.period+' ｜ '+D.meta.ntrade+' 笔 ｜ 胜率 '+D.meta.winrate+'% ｜ 每笔来回成本 $'+D.meta.cost_rt+'/0.01手（随手数放大）';
+  document.getElementById('warnline').textContent =
+    '⚠ '+D.meta.regime+'，单一行情样本 + 未计尾部滑点 — 下图是乐观地板，真实回撤只会更深。';
+
+  const seriesOf = m => D.series.filter(s=>s.mode===m).sort((a,b)=>a.start-b.start);
+
+  function fmtMoney(v){
+    if(v>=1e6) return '$'+(v/1e6).toFixed(2)+'M';
+    if(v>=1e3) return '$'+(v/1e3).toFixed(1)+'k';
+    return '$'+Math.round(v);
+  }
+
+  // ---- tiles ----
+  function renderTiles(){
+    const ss = seriesOf(mode);
+    const best = ss.reduce((a,b)=>b.final>a.final?b:a);
+    const ruined = ss.filter(s=>s.ruined);
+    const ddmax = Math.max(...ss.map(s=>s.maxdd));
+    const t = document.getElementById('tiles');
+    t.innerHTML =
+      tile('最佳路径终值', fmtMoney(best.final), '起始 $'+best.start+' · '+best.ret.toFixed(0)+'×') +
+      tile('最深回撤', ddmax.toFixed(0)+'%', '7 档中最惨那条') +
+      tile('爆仓档位', ruined.length? ('$'+ruined.map(s=>s.start).join(', $')) : '无', ruined.length?'本金不足被清零':'全部存活') +
+      tile('档位数', starts.length+' 档', '$'+starts[0]+' ~ $'+starts[starts.length-1]);
+  }
+  function tile(k,v,sub){
+    const small = v.length>7?' sm':'';
+    return '<div class="tile"><div class="k">'+k+'</div><div class="v'+small+'">'+v+
+      '</div><div class="k" style="margin-top:3px">'+sub+'</div></div>';
+  }
+
+  // ---- legend ----
+  function renderLegend(){
+    const l = document.getElementById('legend');
+    l.innerHTML='';
+    starts.forEach(s=>{
+      const el=document.createElement('span');
+      el.className='lg'+(visible[s]?'':' off');
+      el.innerHTML='<span class="sw" style="background:'+css(colorForStart[s])+'"></span>起始 $'+s;
+      el.onclick=()=>{visible[s]=!visible[s]; renderLegend(); draw();};
+      l.appendChild(el);
+    });
+  }
+
+  // ---- table ----
+  function renderTable(){
+    const tb=document.querySelector('#tbl tbody'); tb.innerHTML='';
+    seriesOf(mode).forEach(s=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML='<td><span class="lg" style="padding:0"><span class="sw" style="width:14px;height:3px;border-radius:2px;background:'+
+        css(colorForStart[s.start])+';display:inline-block;margin-right:6px"></span>$'+s.start+'</span></td>'+
+        '<td>'+fmtMoney(s.final)+'</td><td>'+s.ret.toFixed(1)+'×</td>'+
+        '<td>'+s.maxdd.toFixed(1)+'%</td><td>'+s.end_lot.toFixed(2)+'</td>'+
+        '<td>'+(s.ruined?'<span class="ruin">爆仓</span>':'<span class="ok">存活</span>')+'</td>';
+      tb.appendChild(tr);
+    });
+    document.getElementById('tblnote').textContent =
+      mode==='ratchet'
+      ? '只涨不跌：手数随净值创新高翻倍，回撤时不降 — 高手数时撞上坏行情，亏损全额承压（$200 爆仓即此机制）。'
+      : '对称刹车：净值跌破一级自动把手数降回去 — 牺牲一点上行，换回撤时的自动保护。';
+  }
+
+  // ---- canvas 画线 ----
+  const PADL=58, PADR=14, PADT=12, PADB=28;
+  function setup(cv, h){
+    const dpr=window.devicePixelRatio||1;
+    const w=cv.parentElement.clientWidth;
+    cv.width=w*dpr; cv.height=h*dpr; cv.style.height=h+'px';
+    const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+    return {ctx,w,h};
+  }
+  const xN = D.x.length;
+  function xpix(i,w){ return PADL + (w-PADL-PADR)*(i/(xN-1)); }
+
+  // 资金图: 对数 Y
+  let eqMin=1e9, eqMax=0;
+  D.series.forEach(s=> s.curve.forEach(v=>{ if(v>0){ if(v<eqMin)eqMin=v; if(v>eqMax)eqMax=v; }}));
+  const lgMin=Math.floor(Math.log10(eqMin)), lgMax=Math.ceil(Math.log10(eqMax));
+  function ylog(v,h){
+    if(v<=0) v=eqMin;
+    const t=(Math.log10(v)-lgMin)/(lgMax-lgMin);
+    return PADT + (h-PADT-PADB)*(1-t);
+  }
+
+  function drawEq(){
+    const cv=document.getElementById('eq');
+    const {ctx,w,h}=setup(cv,340);
+    ctx.clearRect(0,0,w,h);
+    // 网格: 10^k
+    ctx.font='11px system-ui'; ctx.textBaseline='middle';
+    for(let k=lgMin;k<=lgMax;k++){
+      const y=ylog(Math.pow(10,k),h);
+      ctx.strokeStyle=css('--grid'); ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(PADL,y); ctx.lineTo(w-PADR,y); ctx.stroke();
+      ctx.fillStyle=css('--muted'); ctx.textAlign='right';
+      ctx.fillText(fmtMoney(Math.pow(10,k)), PADL-8, y);
+    }
+    // x 日期刻度 (6 个)
+    ctx.textAlign='center'; ctx.textBaseline='top';
+    const ticks=6;
+    for(let t=0;t<=ticks;t++){
+      const i=Math.round((xN-1)*t/ticks);
+      const x=xpix(i,w);
+      ctx.fillStyle=css('--muted');
+      ctx.fillText((D.x[i]||'').slice(0,7), x, h-PADB+8);
+    }
+    // 曲线
+    const ss=seriesOf(mode);
+    ss.forEach(s=>{
+      if(!visible[s.start]) return;
+      ctx.strokeStyle=css(colorForStart[s.start]); ctx.lineWidth=2;
+      ctx.lineJoin='round'; ctx.beginPath();
+      let started=false, ruinX=null, ruinY=null;
+      for(let i=0;i<s.curve.length;i++){
+        const v=s.curve[i];
+        if(v<=0){ ruinX=xpix(i,w); ruinY=h-PADB; break; }
+        const x=xpix(i,w), y=ylog(v,h);
+        if(!started){ctx.moveTo(x,y);started=true;} else ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+      if(ruinX!=null){
+        ctx.fillStyle=css('--crit');
+        ctx.beginPath(); ctx.arc(ruinX,ruinY-4,4,0,7); ctx.fill();
+        ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='bottom';
+        ctx.fillText('爆仓', ruinX+6, ruinY);
+      }
+    });
+    eqGeom={w,h};
+  }
+  let eqGeom={w:0,h:0};
+
+  // 回撤图: 线性 0..maxDDall, 0 在顶
+  let ddMaxAll=0;
+  D.series.forEach(s=> s.ddcurve.forEach(v=>{ if(v>ddMaxAll)ddMaxAll=v;}));
+  function ydd(v,h){ return PADT + (h-PADT-PADB)*(v/ddMaxAll); }
+  function drawDD(){
+    const cv=document.getElementById('dd');
+    const {ctx,w,h}=setup(cv,180);
+    ctx.clearRect(0,0,w,h);
+    ctx.font='11px system-ui'; ctx.textBaseline='middle';
+    const steps=[0,25,50,75,100].filter(v=>v<=ddMaxAll+5);
+    steps.forEach(v=>{
+      const y=ydd(v,h);
+      ctx.strokeStyle=css('--grid'); ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(PADL,y); ctx.lineTo(w-PADR,y); ctx.stroke();
+      ctx.fillStyle=css('--muted'); ctx.textAlign='right';
+      ctx.fillText('-'+v+'%', PADL-8, y);
+    });
+    const ss=seriesOf(mode);
+    ss.forEach(s=>{
+      if(!visible[s.start]) return;
+      ctx.strokeStyle=css(colorForStart[s.start]); ctx.lineWidth=1.5;
+      ctx.globalAlpha=.9; ctx.beginPath();
+      let started=false;
+      for(let i=0;i<s.ddcurve.length;i++){
+        const x=xpix(i,w), y=ydd(s.ddcurve[i],h);
+        if(!started){ctx.moveTo(x,y);started=true;} else ctx.lineTo(x,y);
+      }
+      ctx.stroke(); ctx.globalAlpha=1;
+    });
+    ddGeom={w,h};
+  }
+  let ddGeom={w:0,h:0};
+
+  function draw(){ drawEq(); drawDD(); }
+
+  // ---- hover tooltip (资金图) ----
+  const tip=document.getElementById('tip');
+  const eqcv=document.getElementById('eq');
+  eqcv.addEventListener('mousemove', e=>{
+    const r=eqcv.getBoundingClientRect();
+    const px=e.clientX-r.left;
+    const {w,h}=eqGeom;
+    if(px<PADL||px>w-PADR){ tip.style.opacity=0; return; }
+    const frac=(px-PADL)/(w-PADL-PADR);
+    const i=Math.max(0,Math.min(xN-1,Math.round(frac*(xN-1))));
+    const x=xpix(i,w);
+    // 重绘 + crosshair
+    drawEq();
+    const ctx=eqcv.getContext('2d');
+    ctx.strokeStyle=css('--axis'); ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x,PADT); ctx.lineTo(x,h-PADB); ctx.stroke();
+    const ss=seriesOf(mode).filter(s=>visible[s.start]);
+    let rows='';
+    ss.forEach(s=>{
+      const v=s.curve[i];
+      ctx.fillStyle=css(colorForStart[s.start]);
+      if(v>0){ ctx.beginPath(); ctx.arc(x,ylog(v,h),3.2,0,7); ctx.fill(); }
+      rows+='<div class="r"><span class="nm"><span class="sw" style="background:'+
+        css(colorForStart[s.start])+'"></span>$'+s.start+'</span><span>'+
+        (v>0?fmtMoney(v):'<span style="color:var(--crit)">爆仓</span>')+'</span></div>';
+    });
+    tip.innerHTML='<div class="d">'+(D.x[i]||'')+'</div>'+rows;
+    tip.style.opacity=1;
+    let tx=x+14; if(tx> w-170) tx=x-160;
+    tip.style.left=tx+'px'; tip.style.top=(PADT+6)+'px';
+  });
+  eqcv.addEventListener('mouseleave', ()=>{ tip.style.opacity=0; drawEq(); });
+
+  // ---- mode toggle ----
+  document.getElementById('modetog').addEventListener('click', e=>{
+    const b=e.target.closest('button'); if(!b) return;
+    mode=b.dataset.mode;
+    [...document.querySelectorAll('#modetog button')].forEach(x=>x.classList.toggle('on',x===b));
+    renderTiles(); renderTable(); draw();
+  });
+
+  // ---- theme ----
+  document.getElementById('themebtn').onclick=()=>{
+    const cur=document.documentElement.getAttribute('data-theme');
+    const dark = cur? cur==='dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.setAttribute('data-theme', dark?'light':'dark');
+    renderLegend(); draw();
+  };
+
+  window.addEventListener('resize', draw);
+  renderTiles(); renderLegend(); renderTable(); draw();
+})();
+</script>
+</body>
+</html>
