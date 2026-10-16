@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>爆仓分析器 — v1.8 stable</title>
+<style>
+:root {
+  --bg:     #0d1117;
+  --surf:   #161b22;
+  --raise:  #21262d;
+  --bord:   #30363d;
+  --muted:  #8b949e;
+  --text:   #c9d1d9;
+  --acc:    #58a6ff;
+  --profit: #3fb950;
+  --loss:   #f85149;
+  --warn:   #d29922;
+  --liq:    #ff7b72;
+  --purple: #a371f7;
+  --inp:    #0d1117;
+  --shadow: rgba(0,0,0,0.55);
+}
+[data-theme="light"] {
+  --bg:#fff;--surf:#f6f8fa;--raise:#eaeef2;--bord:#d0d7de;
+  --muted:#656d76;--text:#1f2328;--acc:#0969da;--profit:#1a7f37;
+  --loss:#cf222e;--warn:#9a6700;--liq:#d1242f;--purple:#8250df;
+  --inp:#fff;--shadow:rgba(31,35,40,0.15);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  font-size:13px;padding:16px;max-width:1600px;margin:0 auto;
+}
+h1{font-size:18px;color:var(--acc);margin-bottom:4px;}
+.sub0{color:var(--muted);font-size:11px;margin-bottom:16px;}
+.theme-btn{
+  position:fixed;top:12px;right:12px;z-index:200;
+  background:var(--surf);border:1px solid var(--bord);color:var(--text);
+  padding:5px 11px;border-radius:6px;cursor:pointer;font-size:12px;
+  display:flex;align-items:center;gap:5px;box-shadow:0 2px 8px var(--shadow);
+}
+.theme-btn:hover{border-color:var(--acc);}
+.layout{display:grid;grid-template-columns:1fr 320px;gap:16px;}
+@media(max-width:1100px){.layout{grid-template-columns:1fr;}}
+.card{background:var(--surf);border:1px solid var(--bord);border-radius:6px;padding:14px;margin-bottom:12px;}
+.card-sticky{position:sticky;top:8px;z-index:100;box-shadow:0 4px 16px rgba(0,0,0,0.4);border-color:var(--acc);max-height:calc(100vh - 32px);overflow-y:auto;}
+h2{font-size:11px;color:var(--muted);margin-bottom:10px;border-bottom:1px solid var(--bord);padding-bottom:4px;letter-spacing:.05em;text-transform:uppercase;}
+.field{margin-bottom:10px;}
+.field label{display:block;color:var(--muted);font-size:11px;margin-bottom:3px;}
+.field input[type="number"]{
+  width:100%;background:var(--inp);border:1px solid var(--bord);
+  color:var(--text);padding:5px 7px;border-radius:4px;
+  font-family:monospace;font-size:13px;
+}
+.field input:focus{outline:none;border-color:var(--acc);}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+.btn-grp{display:flex;gap:4px;margin-top:3px;}
+.btn-grp button{
+  flex:1;background:var(--inp);border:1px solid var(--bord);color:var(--text);
+  padding:5px 8px;border-radius:3px;cursor:pointer;font-size:11px;
+}
+.btn-grp button.on{background:var(--acc);border-color:var(--acc);color:#fff;}
+.btn-grp button:hover:not(.on){border-color:var(--acc);}
+.lctr{display:flex;align-items:center;gap:8px;}
+.lctr button{
+  background:var(--inp);border:1px solid var(--bord);color:var(--text);
+  padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:14px;line-height:1;
+}
+.lctr button:hover{border-color:var(--acc);}
+.lctr input{
+  width:60px;text-align:center;background:var(--inp);border:1px solid var(--bord);
+  color:var(--text);padding:4px;border-radius:4px;font-family:monospace;font-size:13px;
+}
+.pbar{display:flex;gap:5px;flex-wrap:wrap;}
+.pbar button{
+  background:var(--inp);border:1px solid var(--bord);color:var(--text);
+  padding:4px 9px;border-radius:3px;cursor:pointer;font-size:11px;
+}
+.pbar button:hover{border-color:var(--acc);}
+/* 爆仓警告条 */
+.liq-bar{
+  background:linear-gradient(135deg,rgba(248,81,73,.1),rgba(248,81,73,.03));
+  border:1px solid var(--liq);border-radius:6px;padding:10px 14px;
+  margin-bottom:12px;display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;
+}
+.liq-bar .icon{font-size:22px;line-height:1;}
+.liq-bar .liq-main{font-weight:bold;color:var(--liq);font-size:15px;font-family:monospace;}
+.liq-bar .liq-det{font-size:11px;color:var(--muted);margin-top:2px;}
+.liq-bar .liq-right{text-align:right;}
+.liq-bar .liq-dist{font-size:22px;font-weight:bold;color:var(--liq);font-family:monospace;}
+.liq-bar .liq-dlbl{font-size:10px;color:var(--muted);}
+/* KPI */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px;}
+.kpi{background:var(--surf);border:1px solid var(--bord);border-left:3px solid var(--acc);border-radius:4px;padding:8px 10px;}
+.kpi.kd{border-left-color:var(--liq);}
+.kpi.kw{border-left-color:var(--warn);}
+.kpi.kg{border-left-color:var(--profit);}
+.kpi .kl{color:var(--muted);font-size:10px;}
+.kpi .kv{font-family:monospace;font-size:15px;font-weight:bold;margin-top:2px;}
+.kpi .ks{color:var(--muted);font-size:10px;margin-top:1px;}
+/* 图表 */
+.ct{font-size:13px;font-weight:bold;margin-bottom:3px;}
+.cs{font-size:11px;color:var(--muted);margin-bottom:10px;}
+.chart-wrap{position:relative;height:300px;width:100%;}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:8px;}
+.li{display:flex;align-items:center;gap:4px;}
+.ld{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+/* 分层编辑器 */
+.le{max-height:440px;overflow-y:auto;}
+.lh,.lr{display:grid;grid-template-columns:28px 60px 60px 60px;gap:4px;padding:3px 0;align-items:center;font-family:monospace;font-size:11px;border-bottom:1px solid rgba(48,54,61,0.35);}
+.lh>*{color:var(--muted);font-size:10px;}
+.ltag{color:var(--acc);font-weight:bold;text-align:center;}
+.lr input{background:var(--inp);border:1px solid var(--bord);color:var(--text);padding:3px 4px;border-radius:3px;font-family:monospace;font-size:11px;width:100%;text-align:right;}
+.lr input:focus{outline:none;border-color:var(--acc);}
+/* 数据表 */
+table{width:100%;border-collapse:collapse;font-family:monospace;font-size:11px;}
+th,td{text-align:right;padding:4px 6px;border-bottom:1px solid var(--bord);white-space:nowrap;}
+th{background:var(--bg);color:var(--muted);font-weight:normal;font-size:10px;text-transform:uppercase;}
+th:first-child,td:first-child{text-align:left;}
+.ca{color:var(--acc);font-weight:bold;}
+.cl{color:var(--loss);}
+.clq{color:var(--liq);font-weight:bold;}
+.cw{color:var(--warn);}
+.cg{color:var(--profit);}
+.cm{color:var(--muted);}
+tr.hl{background:rgba(88,166,255,.07);}
+tr.liqrow td{font-weight:bold;}
+</style>
+</head>
+<body>
+<button class="theme-btn" onclick="toggleTheme()"><span id="ti">🌙</span><span id="tl">深色</span></button>
+<h1>爆仓分析器 — 美分马丁 stable v1.8</h1>
+<div class="sub0">固定层间距 $2.5 · L1-L12 查表 · L13+ ×1.3 · 500:1 杠杆 · 实时显示各层爆仓价位</div>
+
+<div class="layout">
+<div><!-- 左列 -->
+
+  <div class="card">
+    <h2>参数</h2>
+    <div class="row2">
+      <div class="field">
+        <label>L1 开仓价 (USD/oz)</label>
+        <input type="number" id="sp" value="3300" step="1" oninput="go()">
+      </div>
+      <div class="field">
+        <label>方向</label>
+        <div class="btn-grp">
+          <button id="dBuy" class="on" onclick="setDir(1)">做多 ▲</button>
+          <button id="dSell" onclick="setDir(-1)">做空 ▼</button>
+        </div>
+      </div>
+    </div>
+    <div class="row3">
+      <div class="field">
+        <label>账户余额 (USC)</label>
+        <input type="number" id="bal" value="30000" step="1000" oninput="go()">
+      </div>
+      <div class="field">
+        <label>强平线 Margin Level (%)</label>
+        <input type="number" id="sop" value="50" step="5" oninput="go()">
+      </div>
+      <div class="field">
+        <label>杠杆</label>
+        <input type="number" id="lev" value="500" step="100" oninput="go()">
+      </div>
+    </div>
+    <div class="field">
+      <label>层数 (3–30)</label>
+      <div class="lctr">
+        <button onclick="chgN(-1)">−</button>
+        <input type="number" id="nc" value="22" min="3" max="30" oninput="onNInput()">
+        <button onclick="chgN(+1)">+</button>
+        <span style="color:var(--muted);font-size:11px">层</span>
+      </div>
+    </div>
+    <div class="field">
+      <label>预设</label>
+      <div class="pbar">
+        <button onclick="loadP('S22')" style="background:#1a7f37;color:#fff">v1.8 实盘 22层</button>
+        <button onclick="loadP('S12')" style="background:#0969da;color:#fff">v1.8 保守 12层</button>
+        <button onclick="loadP('REF')" style="background:#8250df;color:#fff">参照 V4 12层</button>
+        <button onclick="loadP('CUS')">自定义</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 爆仓条 -->
+  <div class="liq-bar">
+    <div class="icon">⚠️</div>
+    <div>
+      <div class="liq-main" id="lp">— USD/oz</div>
+      <div class="liq-det" id="ld2">满层时爆仓价位 (强平线50%)</div>
+    </div>
+    <div class="liq-right">
+      <div class="liq-dist" id="ldist">—</div>
+      <div class="liq-dlbl">距均价 (USD)</div>
+    </div>
+  </div>
+
+  <!-- KPI -->
+  <div class="kpi-grid" id="kpiGrid"></div>
+
+  <!-- 图1: 价格视图 -->
+  <div class="card">
+    <div class="ct">💹 价格视图</div>
+    <div class="cs">各层开仓价 · 加权均价 · TP目标价 · 爆仓线（无爆仓风险时不显示）</div>
+    <div class="chart-wrap"><canvas id="cPrice"></canvas></div>
+    <div class="legend">
+      <div class="li"><span class="ld" style="background:#f85149"></span>开仓价</div>
+      <div class="li"><span class="ld" style="background:#58a6ff"></span>加权均价</div>
+      <div class="li"><span class="ld" style="background:#3fb950"></span>TP目标价</div>
+      <div class="li"><span class="ld" style="background:#ff7b72"></span>爆仓线</div>
+    </div>
+  </div>
+
+  <!-- 图2: 浮亏 + 保证金 -->
+  <div class="card">
+    <div class="ct">📉 加仓瞬间浮亏 &amp; 保证金</div>
+    <div class="cs">红柱=累计浮亏(USC) · 橙线=所需保证金(USC) · 绿虚=账户余额</div>
+    <div class="chart-wrap"><canvas id="cFloat"></canvas></div>
+  </div>
+
+  <!-- 图3: 手数 -->
+  <div class="card">
+    <div class="ct">📊 手数分布</div>
+    <div class="cs">蓝柱=单层手数 · 紫线=累计手数</div>
+    <div class="chart-wrap"><canvas id="cLot"></canvas></div>
+  </div>
+
+  <!-- 数据表 -->
+  <div class="card">
+    <h2>逐层明细</h2>
+    <div style="overflow-x:auto"><table id="dtbl"></table></div>
+  </div>
+
+</div><!-- /左列 -->
+
+<div><!-- 右列 -->
+  <div class="card card-sticky">
+    <h2>分层参数</h2>
+    <div class="lh">
+      <div>L</div><div>间距Δ</div><div>手数</div><div>TP反弹</div>
+    </div>
+    <div class="le" id="le"></div>
+    <div style="margin-top:10px;padding:8px;background:var(--bg);border-radius:4px;border-left:3px solid var(--acc)">
+      <div style="display:flex;justify-content:space-between;font-family:monospace">
+        <span style="color:var(--muted);font-size:11px">累计手数:</span>
+        <span id="tlots" style="color:var(--acc);font-weight:bold;font-size:14px">0.00</span>
+      </div>
+    </div>
+    <div class="field" style="margin-top:8px">
+      <label>平仓均价差目标 (USD/oz)</label>
+      <input type="number" id="avgt" value="0.6" step="0.1" oninput="go()">
+    </div>
+    <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.7">
+      <b style="color:var(--text)">爆仓价公式（多单）</b><br>
+      P = lev × (totalLots×CS×wavg − balance) / (totalLots×CS×(lev − kSO))<br>
+      若 P ≤ 0 表示该层无爆仓风险
+    </div>
+  </div>
+</div><!-- /右列 -->
+</div><!-- /layout -->
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+// ── 预设 ─────────────────────────────────────────────────────────────────────
+var PRESETS = {
+  S22:{n:22,
+    dist:[0,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5],
+    lot:[0.01,0.01,0.02,0.03,0.04,0.05,0.07,0.09,0.12,0.16,0.21,0.27,0.35,0.45,0.58,0.75,0.97,1.26,1.63,2.11,2.74,3.56],
+    tp:Array(22).fill(0.6)},
+  S12:{n:12,
+    dist:[0,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5],
+    lot:[0.01,0.01,0.02,0.03,0.04,0.05,0.07,0.09,0.12,0.16,0.21,0.27],
+    tp:Array(12).fill(0.6)},
+  REF:{n:12,
+    dist:[0,2.00,1.00,1.00,0.86,0.72,0.63,0.61,0.56,0.55,0.53,0.52],
+    lot:[0.01,0.02,0.03,0.04,0.02,0.01,0.01,0.01,0.01,0.01,0.01,0.01],
+    tp:Array(12).fill(0.6)},
+  CUS:{n:10,
+    dist:[0,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5],
+    lot:[0.01,0.01,0.02,0.03,0.04,0.05,0.07,0.09,0.12,0.16],
+    tp:Array(10).fill(0.6)},
+};
+
+// ── 状态 ─────────────────────────────────────────────────────────────────────
+var DIR = 1;   // 1=多 -1=空
+var N   = 22;
+var LD  = {dist:[], lot:[], tp:[]};
+var CHT = {};  // Chart 实例
+
+// ── 预设加载 ─────────────────────────────────────────────────────────────────
+function loadP(k){
+  var p = PRESETS[k];
+  N = p.n;
+  LD.dist = p.dist.slice();
+  LD.lot  = p.lot.slice();
+  LD.tp   = p.tp.slice();
+  document.getElementById('nc').value = N;
+  alignLD();
+  buildEditor();
+  go();
+}
+
+// ── 层数 ─────────────────────────────────────────────────────────────────────
+function chgN(d){
+  var el = document.getElementById('nc');
+  var v  = Math.max(3, Math.min(30, (parseInt(el.value)||N) + d));
+  el.value = v;
+  setN(v);
+}
+function onNInput(){
+  var v = parseInt(document.getElementById('nc').value);
+  if(!isNaN(v)) setN(Math.max(3, Math.min(30, v)));
+}
+function setN(n){
+  N = n;
+  alignLD();
+  buildEditor();
+  go();
+}
+function alignLD(){
+  ['dist','lot','tp'].forEach(function(k){
+    var a = LD[k];
+    while(a.length < N){
+      if(k==='dist') a.push(2.5);
+      else if(k==='lot'){
+        var prev = a[a.length-1] || 0.01;
+        a.push(Math.max(0.01, Math.floor(prev*1.3*100)/100));
+      } else a.push(a[a.length-1] || 0.6);
+    }
+    a.length = N;
+  });
+}
+
+// ── 方向 ─────────────────────────────────────────────────────────────────────
+function setDir(d){
+  DIR = d;
+  document.getElementById('dBuy').className  = d===1  ? 'on' : '';
+  document.getElementById('dSell').className = d===-1 ? 'on' : '';
+  go();
+}
+
+// ── 编辑器 ───────────────────────────────────────────────────────────────────
+function buildEditor(){
+  var html = '';
+  for(var i=0;i<N;i++){
+    var dis = i===0?'disabled':'';
+    html += '<div class="lr">'
+      +'<div class="ltag">L'+(i+1)+'</div>'
+      +'<div><input type="number" step="0.5"  value="'+LD.dist[i].toFixed(1)+'" '+dis+' data-k="dist" data-i="'+i+'" oninput="onLE(this)"></div>'
+      +'<div><input type="number" step="0.01" value="'+LD.lot[i].toFixed(2)+'" data-k="lot"  data-i="'+i+'" oninput="onLE(this)"></div>'
+      +'<div><input type="number" step="0.1"  value="'+LD.tp[i].toFixed(1)+'"  data-k="tp"   data-i="'+i+'" oninput="onLE(this)"></div>'
+      +'</div>';
+  }
+  document.getElementById('le').innerHTML = html;
+  document.getElementById('tlots').textContent = LD.lot.slice(0,N).reduce(function(a,b){return a+b;},0).toFixed(2);
+}
+function onLE(inp){
+  var v = parseFloat(inp.value);
+  if(isNaN(v)) return;
+  LD[inp.dataset.k][parseInt(inp.dataset.i)] = v;
+  document.getElementById('tlots').textContent = LD.lot.slice(0,N).reduce(function(a,b){return a+b;},0).toFixed(2);
+  go();
+}
+
+// ── 核心计算 ─────────────────────────────────────────────────────────────────
+function getP(){
+  return {
+    sp:  parseFloat(document.getElementById('sp').value)  || 3300,
+    bal: parseFloat(document.getElementById('bal').value) || 30000,
+    sop: parseFloat(document.getElementById('sop').value) || 50,
+    lev: parseFloat(document.getElementById('lev').value) || 500,
+    avgt:parseFloat(document.getElementById('avgt').value)|| 0.6,
+  };
+}
+
+function simulate(){
+  var p = getP();
+  var kSO = p.sop / 100;
+  var CS  = 100;  // 0.01lot=1oz => USC = Δprice * lots * 100
+  var layers = [];
+  var totLots = 0, sumLP = 0;
+
+  for(var i=0;i<N;i++){
+    var lots = LD.lot[i];
+    // 入场价
+    var entry;
+    if(i===0){
+      entry = p.sp;
+    } else {
+      entry = layers[i-1].entry - DIR * LD.dist[i];
+    }
+    totLots += lots;
+    sumLP   += lots * entry;
+    var wavg = sumLP / totLots;
+
+    // 加仓瞬间浮亏（之前各层）
+    var floatUSC = 0;
+    for(var j=0;j<i;j++){
+      floatUSC += DIR * (layers[j].entry - entry) * layers[j].lots * CS;
+    }
+
+    // 保证金 USC = totalLots * entry * CS / lev
+    var margin = totLots * entry * CS / p.lev;
+
+    // 爆仓价
+    // 正确推导（多单）：
+    //   equity = balance + (P - wavg) * totLots * CS
+    //   margin_P = totLots * P * CS / lev
+    //   equity / margin_P = kSO
+    //   => P = lev*(totLots*CS*wavg - balance) / (totLots*CS*(lev - kSO))
+    // 空单：P = lev*(totLots*CS*wavg + balance) / (totLots*CS*(lev + kSO))
+    var A = totLots * CS;
+    var liqP;
+    if(DIR===1){
+      var denom = A * (p.lev - kSO);
+      liqP = denom > 0 ? p.lev * (A*wavg - p.bal) / denom : null;
+      if(liqP !== null && liqP >= wavg) liqP = null; // 无效（理论上长仓爆仓价应在均价下方）
+    } else {
+      var denom2 = A * (p.lev + kSO);
+      liqP = denom2 > 0 ? p.lev * (A*wavg + p.bal) / denom2 : null;
+      if(liqP !== null && liqP <= wavg) liqP = null;
+    }
+
+    // 若 liqP <= 0，也视为无爆仓风险
+    if(liqP !== null && liqP <= 0) liqP = null;
+
+    var tpPrice  = wavg + DIR * LD.tp[i];
+    var tpProfit = LD.tp[i] * totLots * CS;
+    var liqDist  = liqP !== null ? Math.abs(wavg - liqP) : null;
+
+    layers.push({
+      n:i+1, lots:lots, totLots:totLots,
+      entry:entry, wavg:wavg, tpPrice:tpPrice, liqP:liqP,
+      floatUSC:floatUSC, margin:margin,
+      tpProfit:tpProfit, liqDist:liqDist,
+      floatPct: p.bal>0 ? floatUSC/p.bal*100 : 0,
+    });
+  }
+  return {layers:layers, p:p};
+}
+
+// ── 主渲染 ────────────────────────────────────────────────────────────────────
+function go(){
+  var res = simulate();
+  var L   = res.layers;
+  var last = L[L.length-1];
+
+  // 爆仓条
+  if(last.liqP !== null){
+    document.getElementById('lp').textContent    = last.liqP.toFixed(2)+' USD/oz';
+    document.getElementById('ldist').textContent = last.liqDist.toFixed(2);
+    var dir_cn = DIR===1 ? '下跌' : '上涨';
+    document.getElementById('ld2').textContent   = N+'层满开，均价 '+last.wavg.toFixed(2)+'，价格'+dir_cn+' '+last.liqDist.toFixed(2)+' USD 触发强平';
+  } else {
+    document.getElementById('lp').textContent    = '无爆仓风险';
+    document.getElementById('ldist').textContent = '∞';
+    document.getElementById('ld2').textContent   = '当前余额足以承受 '+N+' 层所有浮亏，不会触发强平';
+  }
+
+  renderKPI(L, res.p);
+  renderPriceChart(L);
+  renderFloatChart(L, res.p.bal);
+  renderLotChart(L);
+  renderTable(L, res.p);
+}
+
+// ── KPI ──────────────────────────────────────────────────────────────────────
+function renderKPI(L, p){
+  var last = L[L.length-1];
+  var items = [
+    {l:'L1 开仓价',   v:L[0].entry.toFixed(2),       s:'USD/oz',   c:''},
+    {l:'L'+N+' 均价', v:last.wavg.toFixed(2),         s:'USD/oz',   c:''},
+    {l:'总手数',       v:last.totLots.toFixed(2),      s:'lots',     c:''},
+    {l:'TP目标价',     v:last.tpPrice.toFixed(2),      s:'均价+'+LD.tp[N-1].toFixed(1), c:'kg'},
+    {l:'爆仓价',       v:last.liqP!==null ? last.liqP.toFixed(2)+' USD' : '无风险',
+                                                        s:'USD/oz',   c:last.liqP!==null?'kd':'kg'},
+    {l:'距爆仓',       v:last.liqDist!==null ? last.liqDist.toFixed(2) : '∞',
+                       s:'USD from wavg',               c:last.liqDist!==null?(last.liqDist<20?'kd':last.liqDist<50?'kw':'kg'):'kg'},
+    {l:'L'+N+' 浮亏', v:last.floatUSC.toFixed(0)+' USC', s:last.floatPct.toFixed(1)+'% 余额',
+                       c:last.floatPct>30?'kd':last.floatPct>15?'kw':''},
+    {l:'TP预期收益',   v:'+'+last.tpProfit.toFixed(0)+' USC', s:'全'+N+'层平仓', c:'kg'},
+  ];
+  document.getElementById('kpiGrid').innerHTML = items.map(function(x){
+    return '<div class="kpi '+x.c+'"><div class="kl">'+x.l+'</div><div class="kv">'+x.v+'</div><div class="ks">'+x.s+'</div></div>';
+  }).join('');
+}
+
+// ── Chart 通用 ────────────────────────────────────────────────────────────────
+var DARK_GRID = 'rgba(48,54,61,0.5)';
+var DARK_TXT  = '#8b949e';
+
+function rebuildChart(id, cfg){
+  if(CHT[id]){ CHT[id].destroy(); delete CHT[id]; }
+  var canvas = document.getElementById(id);
+  if(!canvas) return;
+  CHT[id] = new Chart(canvas.getContext('2d'), cfg);
+}
+
+function scaleBase(){
+  return {
+    x:{ grid:{color:DARK_GRID}, ticks:{color:DARK_TXT, font:{size:10}} },
+    y:{ grid:{color:DARK_GRID}, ticks:{color:DARK_TXT, font:{size:10}} },
+  };
+}
+function plugBase(){
+  return { legend:{labels:{color:DARK_TXT, boxWidth:10, font:{size:11}}}, tooltip:{mode:'index',intersect:false} };
+}
+
+// ── 图1: 价格 ─────────────────────────────────────────────────────────────────
+function renderPriceChart(L){
+  var labels  = L.map(function(l){return 'L'+l.n;});
+  var entries = L.map(function(l){return l.entry;});
+  var wavgs   = L.map(function(l){return l.wavg;});
+  var tps     = L.map(function(l){return l.tpPrice;});
+  // 只有有爆仓价的层才绘制爆仓线
+  var liqs    = L.map(function(l){return l.liqP !== null ? l.liqP : null;});
+
+  // 判断是否有任何有效爆仓价
+  var hasLiq  = liqs.some(function(v){return v!==null;});
+
+  var datasets = [
+    {label:'开仓价',   data:entries, borderColor:'#f85149', backgroundColor:'rgba(248,81,73,.12)', pointRadius:4, tension:.25},
+    {label:'加权均价', data:wavgs,   borderColor:'#58a6ff', backgroundColor:'rgba(88,166,255,.08)', pointRadius:3, tension:.25},
+    {label:'TP目标价', data:tps,     borderColor:'#3fb950', backgroundColor:'rgba(63,185,80,.08)', pointRadius:3, tension:.25, borderDash:[5,3]},
+  ];
+  if(hasLiq){
+    datasets.push({label:'爆仓线', data:liqs, borderColor:'#ff7b72', backgroundColor:'rgba(255,123,114,.06)', pointRadius:3, tension:.25, borderDash:[2,4], borderWidth:2, spanGaps:false});
+  }
+
+  rebuildChart('cPrice',{
+    type:'line',
+    data:{labels:labels, datasets:datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:plugBase(),
+      scales:scaleBase(),
+    }
+  });
+}
+
+// ── 图2: 浮亏 ─────────────────────────────────────────────────────────────────
+function renderFloatChart(L, balance){
+  var labels  = L.map(function(l){return 'L'+l.n;});
+  var floats  = L.map(function(l){return l.floatUSC;});
+  var margins = L.map(function(l){return l.margin;});
+
+  rebuildChart('cFloat',{
+    type:'bar',
+    data:{labels:labels, datasets:[
+      {label:'累计浮亏 (USC)',  data:floats,  backgroundColor:'rgba(248,81,73,.45)'},
+      {label:'保证金 (USC)',    data:margins, type:'line', borderColor:'#d29922', borderWidth:2, pointRadius:3, tension:.25, fill:false},
+      {label:'账户余额',        data:L.map(function(){return balance;}), type:'line', borderColor:'rgba(63,185,80,.55)', borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false},
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:plugBase(),
+      scales:scaleBase(),
+    }
+  });
+}
+
+// ── 图3: 手数 ─────────────────────────────────────────────────────────────────
+function renderLotChart(L){
+  var labels = L.map(function(l){return 'L'+l.n;});
+  var lots   = L.map(function(l){return l.lots;});
+  var tots   = L.map(function(l){return l.totLots;});
+
+  rebuildChart('cLot',{
+    type:'bar',
+    data:{labels:labels, datasets:[
+      {label:'单层手数',  data:lots, backgroundColor:'rgba(88,166,255,.45)', yAxisID:'y'},
+      {label:'累计手数',  data:tots, type:'line', borderColor:'#a371f7', borderWidth:2, pointRadius:3, tension:.25, fill:false, yAxisID:'y2'},
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:plugBase(),
+      scales:{
+        x:{ grid:{color:DARK_GRID}, ticks:{color:DARK_TXT, font:{size:10}} },
+        y:{ grid:{color:DARK_GRID}, ticks:{color:DARK_TXT, font:{size:10}}, title:{display:true,text:'单层(lots)',color:DARK_TXT,font:{size:10}} },
+        y2:{ position:'right', grid:{drawOnChartArea:false}, ticks:{color:'#a371f7', font:{size:10}}, title:{display:true,text:'累计',color:'#a371f7',font:{size:10}} },
+      }
+    }
+  });
+}
+
+// ── 数据表 ────────────────────────────────────────────────────────────────────
+function renderTable(L, p){
+  var rows = L.map(function(l){
+    var lc = l.liqP!==null ? (l.liqDist<20?'clq':l.liqDist<50?'cw':'cg') : 'cg';
+    var fc = l.floatPct>30 ? 'clq' : l.floatPct>15 ? 'cw' : 'cm';
+    var liqStr  = l.liqP!==null  ? l.liqP.toFixed(2)    : 'N/A';
+    var distStr = l.liqDist!==null ? l.liqDist.toFixed(2) : '—';
+    return '<tr'+(l.n===N?' class="hl liqrow"':'')+'>'
+      +'<td><b>L'+l.n+'</b></td>'
+      +'<td>'+l.lots.toFixed(2)+'</td>'
+      +'<td>'+l.totLots.toFixed(2)+'</td>'
+      +'<td class="cl">'+l.entry.toFixed(2)+'</td>'
+      +'<td class="ca">'+l.wavg.toFixed(2)+'</td>'
+      +'<td class="cg">'+l.tpPrice.toFixed(2)+'</td>'
+      +'<td class="'+lc+'">'+liqStr+'</td>'
+      +'<td class="'+lc+'">'+distStr+'</td>'
+      +'<td class="'+fc+'">'+l.floatUSC.toFixed(0)+'</td>'
+      +'<td class="'+fc+'">'+l.floatPct.toFixed(1)+'%</td>'
+      +'<td class="cg">+'+l.tpProfit.toFixed(0)+'</td>'
+      +'</tr>';
+  });
+  document.getElementById('dtbl').innerHTML =
+    '<thead><tr><th>层</th><th>手数</th><th>累计</th>'
+    +'<th>开仓价</th><th>均价</th><th>TP价</th>'
+    +'<th>爆仓价</th><th>均→爆(USD)</th>'
+    +'<th>浮亏USC</th><th>占余额</th><th>TP收益USC</th>'
+    +'</tr></thead>'
+    +'<tbody>'+rows.join('')+'</tbody>';
+}
+
+// ── 主题 ─────────────────────────────────────────────────────────────────────
+function toggleTheme(){
+  var cur = document.documentElement.getAttribute('data-theme')||'dark';
+  var nxt = cur==='dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', nxt);
+  document.getElementById('ti').textContent = nxt==='dark'?'🌙':'☀️';
+  document.getElementById('tl').textContent = nxt==='dark'?'深色':'浅色';
+  go();
+}
+
+// ── 启动 ─────────────────────────────────────────────────────────────────────
+loadP('S22');
+</script>
+</body>
+</html>
