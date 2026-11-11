@@ -197,7 +197,10 @@ double CalcCompoundLot()
    double riskBudget = Inp_BaseRisk * MathPow(2.0, level);
    double slDist = CalcAtrSL(true);   // 估算本次止损距离(用最新ATR)
    if(slDist <= 0) slDist = Inp_AtrFloor;
-   double lots = riskBudget / slDist;
+   // 单位换算: 每手每$1价格波动盈亏(XAU 1手=100oz→$100); 从品种规格取, 兜底100
+   double perLotPerUsd = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE)/SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+   if(perLotPerUsd <= 0) perLotPerUsd = 100.0;
+   double lots = riskBudget / (slDist * perLotPerUsd);
    return NormalizeLot(lots);
 }
 int CalcCompoundLevel()
