@@ -132,7 +132,7 @@ tr.liqrow td{font-weight:bold;}
 <body>
 <button class="theme-btn" onclick="toggleTheme()"><span id="ti">🌙</span><span id="tl">深色</span></button>
 <h1>爆仓分析器 — 美分马丁 stable v1.8</h1>
-<div class="sub0">固定层间距 $2.5 · L1-L12 查表 · L13+ ×1.3 · 500:1 杠杆 · 实时显示各层爆仓价位</div>
+<div class="sub0">分层间距/TP 可一键统一修改 · L1-L12 查表 · L13+ ×1.3 · 500:1 杠杆 · 实时显示各层爆仓价位</div>
 
 <div class="layout">
 <div><!-- 左列 -->
@@ -240,6 +240,16 @@ tr.liqrow td{font-weight:bold;}
 <div><!-- 右列 -->
   <div class="card card-sticky">
     <h2>分层参数</h2>
+    <div class="row2" style="margin-bottom:10px">
+      <div class="field" style="margin:0">
+        <label>统一间距 Δ (USD/oz)，改动即应用到 L2 起</label>
+        <input type="number" id="gapAll" step="0.01" value="2.5" oninput="onGapAll(this.value)">
+      </div>
+      <div class="field" style="margin:0">
+        <label>统一平仓均价差 TP (USD/oz)，应用到全部层</label>
+        <input type="number" id="tpAll" step="0.1" value="0.6" oninput="onTPAll(this.value)">
+      </div>
+    </div>
     <div class="lh">
       <div>L</div><div>间距Δ</div><div>手数</div><div>TP反弹</div>
     </div>
@@ -249,10 +259,6 @@ tr.liqrow td{font-weight:bold;}
         <span style="color:var(--muted);font-size:11px">累计手数:</span>
         <span id="tlots" style="color:var(--acc);font-weight:bold;font-size:14px">0.00</span>
       </div>
-    </div>
-    <div class="field" style="margin-top:8px">
-      <label>平仓均价差目标 (USD/oz)</label>
-      <input type="number" id="avgt" value="0.6" step="0.1" oninput="go()">
     </div>
     <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.7">
       <b style="color:var(--text)">爆仓价公式（多单）</b><br>
@@ -300,6 +306,7 @@ function loadP(k){
   LD.tp   = p.tp.slice();
   document.getElementById('nc').value = N;
   alignLD();
+  syncGlobal();
   buildEditor();
   go();
 }
@@ -325,7 +332,7 @@ function alignLD(){
   ['dist','lot','tp'].forEach(function(k){
     var a = LD[k];
     while(a.length < N){
-      if(k==='dist') a.push(2.5);
+      if(k==='dist') a.push(a[a.length-1] || 2.5);
       else if(k==='lot'){
         var prev = a[a.length-1] || 0.01;
         a.push(Math.max(0.01, Math.floor(prev*1.3*100)/100));
@@ -344,15 +351,44 @@ function setDir(d){
 }
 
 // ── 编辑器 ───────────────────────────────────────────────────────────────────
+// ── 统一参数（一键改所有层） ──────────────────────────────────────────────────
+// 某段是否统一: 返回统一值, 不统一返回 null
+function uniformFrom(arr, from){
+  var v = arr[from];
+  for(var i=from;i<N;i++) if(Math.abs(arr[i]-v) > 1e-9) return null;
+  return v;
+}
+// 把全局输入框同步为当前逐层的真实状态（不统一则清空并提示）
+function syncGlobal(){
+  var g = uniformFrom(LD.dist, 1), t = uniformFrom(LD.tp, 0);
+  var ge = document.getElementById('gapAll'), te = document.getElementById('tpAll');
+  ge.value = g!==null ? g : '';
+  ge.placeholder = g!==null ? '' : '逐层不等';
+  te.value = t!==null ? t : '';
+  te.placeholder = t!==null ? '' : '逐层不等';
+}
+function onGapAll(v){
+  var g = parseFloat(v);
+  if(isNaN(g) || g<=0) return;
+  for(var i=1;i<N;i++) LD.dist[i] = g;
+  buildEditor(); go();
+}
+function onTPAll(v){
+  var t = parseFloat(v);
+  if(isNaN(t) || t<0) return;
+  for(var i=0;i<N;i++) LD.tp[i] = t;
+  buildEditor(); go();
+}
+
 function buildEditor(){
   var html = '';
   for(var i=0;i<N;i++){
     var dis = i===0?'disabled':'';
     html += '<div class="lr">'
       +'<div class="ltag">L'+(i+1)+'</div>'
-      +'<div><input type="number" step="0.5"  value="'+LD.dist[i].toFixed(1)+'" '+dis+' data-k="dist" data-i="'+i+'" oninput="onLE(this)"></div>'
+      +'<div><input type="number" step="0.01" value="'+LD.dist[i].toFixed(2)+'" '+dis+' data-k="dist" data-i="'+i+'" oninput="onLE(this)"></div>'
       +'<div><input type="number" step="0.01" value="'+LD.lot[i].toFixed(2)+'" data-k="lot"  data-i="'+i+'" oninput="onLE(this)"></div>'
-      +'<div><input type="number" step="0.1"  value="'+LD.tp[i].toFixed(1)+'"  data-k="tp"   data-i="'+i+'" oninput="onLE(this)"></div>'
+      +'<div><input type="number" step="0.1"  value="'+LD.tp[i].toFixed(2)+'"  data-k="tp"   data-i="'+i+'" oninput="onLE(this)"></div>'
       +'</div>';
   }
   document.getElementById('le').innerHTML = html;
@@ -362,6 +398,7 @@ function onLE(inp){
   var v = parseFloat(inp.value);
   if(isNaN(v)) return;
   LD[inp.dataset.k][parseInt(inp.dataset.i)] = v;
+  syncGlobal();
   document.getElementById('tlots').textContent = LD.lot.slice(0,N).reduce(function(a,b){return a+b;},0).toFixed(2);
   go();
 }
@@ -373,7 +410,6 @@ function getP(){
     bal: parseFloat(document.getElementById('bal').value) || 30000,
     sop: parseFloat(document.getElementById('sop').value) || 50,
     lev: parseFloat(document.getElementById('lev').value) || 500,
-    avgt:parseFloat(document.getElementById('avgt').value)|| 0.6,
   };
 }
 
@@ -594,6 +630,7 @@ function renderTable(L, p){
     var fc = l.floatPct>30 ? 'clq' : l.floatPct>15 ? 'cw' : 'cm';
     var liqStr  = l.liqP!==null  ? l.liqP.toFixed(2)    : 'N/A';
     var distStr = l.liqDist!==null ? l.liqDist.toFixed(2) : '—';
+    var dtp = DIR*(l.tpPrice - l.entry);   // 开仓价→TP价 距离(顺向为正)
     return '<tr'+(l.n===N?' class="hl liqrow"':'')+'>'
       +'<td><b>L'+l.n+'</b></td>'
       +'<td>'+l.lots.toFixed(2)+'</td>'
@@ -601,6 +638,7 @@ function renderTable(L, p){
       +'<td class="cl">'+l.entry.toFixed(2)+'</td>'
       +'<td class="ca">'+l.wavg.toFixed(2)+'</td>'
       +'<td class="cg">'+l.tpPrice.toFixed(2)+'</td>'
+      +'<td class="cg">'+dtp.toFixed(2)+'</td>'
       +'<td class="'+lc+'">'+liqStr+'</td>'
       +'<td class="'+lc+'">'+distStr+'</td>'
       +'<td class="'+fc+'">'+l.floatUSC.toFixed(0)+'</td>'
@@ -610,7 +648,7 @@ function renderTable(L, p){
   });
   document.getElementById('dtbl').innerHTML =
     '<thead><tr><th>层</th><th>手数</th><th>累计</th>'
-    +'<th>开仓价</th><th>均价</th><th>TP价</th>'
+    +'<th>开仓价</th><th>均价</th><th>TP价</th><th>开→TP(USD)</th>'
     +'<th>爆仓价</th><th>均→爆(USD)</th>'
     +'<th>浮亏USC</th><th>占余额</th><th>TP收益USC</th>'
     +'</tr></thead>'
