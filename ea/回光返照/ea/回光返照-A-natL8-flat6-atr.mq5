@@ -504,6 +504,17 @@ void UpdatePanel(int trigSig, bool passBear, int cntBear, bool passBull, int cnt
 }
 
 //+------------------------------------------------------------------+
+//| 投票未通过原因(简短): 平铺=同向数不足; 顶K=顶部不齐 / 余票不足
+string VoteWhy(string d, int cnt)
+{
+   if(VOTE_FLAT==1) return StringFormat("同向%d<%d", cnt, FLAT_MIN);
+   string top = StringSubstr(d, VOTE_LEN-TOPK);
+   if(StringFind(top,"t")>=0 || StringFind(top,"?")>=0) return StringFormat("顶%d不齐", TOPK);
+   int r=0;
+   for(int i=0;i<StringLen(d);i++) if(StringGetCharacter(d,i)=='R') r++;
+   return StringFormat("余%d<%d", r, REST_MIN);
+}
+
 void OnTick()
 {
    int curDir=CurrentPosDir();
@@ -526,15 +537,17 @@ void OnTick()
    if(g_hasPos||curDir!=0) return;
    if(trigSig==0) return;
 
-   if(Inp_VerboseLog && trigSig!=lastTrigSig){
-      Print("[回光返照-",VER_TAG,"] 触发",trigSig==1?"金叉":"死叉",
-            " 空[",dB,"]同向",cB,"/",VOTE_LEN," 多[",dL,"]同向",cL,"/",VOTE_LEN);
-      lastTrigSig=trigSig;
-   }
-   if(!IsSpreadOK()) return;
+   // 每根有信号的 bar 都打印一行: 能不能开, 不能就说原因
+   string want = (trigSig==1) ? "空" : "多";
+   bool pass   = (trigSig==1) ? pB : pL;
+   string why  = pass ? "" : VoteWhy((trigSig==1)?dB:dL, (trigSig==1)?cB:cL);
+   if(!pass && Inp_VerboseLog)
+      Print("[回光返照-",VER_TAG,"] 不开",want,": ",why);
+   if(!pass) return;
+   if(!IsSpreadOK()){ if(Inp_VerboseLog) Print("[回光返照-",VER_TAG,"] 不开",want,": 点差过大"); return; }
 
    // 金叉+高周期满足空条件→空 ; 死叉+满足多条件→多
-   if(trigSig==1 && pB) OpenPos(-1,dB,cB);
-   else if(trigSig==-1 && pL) OpenPos(1,dL,cL);
+   if(trigSig==1) OpenPos(-1,dB,cB);
+   else           OpenPos(1,dL,cL);
 }
 //+------------------------------------------------------------------+
